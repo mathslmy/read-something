@@ -5,13 +5,14 @@ import Reader from './components/Reader';
 import Stats from './components/Stats';
 import StudyHub from './components/StudyHub';
 import Settings from './components/Settings';
-import { AppView, Book, Chapter, ApiConfig, ApiPreset, ApiProvider, AppSettings, ReaderSessionSnapshot, RagPreset } from './types';
+import { AppView, Book, Chapter, ApiConfig, ApiPreset, ApiProvider, AppSettings, ReaderSessionSnapshot, RagPreset, TtsConfig, TtsPreset } from './types';
 import { Persona, Character, WorldBookEntry } from './components/settings/types';
 import { deleteImageByRef, migrateDataUrlToImageRef } from './utils/imageStorage';
 import { compactBookForState, deleteBookContent, getBookContent, migrateInlineBookContent, saveBookContent } from './utils/bookContentStorage';
 import { buildConversationKey, readConversationBucket, persistConversationBucket } from './utils/readerChatRuntime';
 import { BUILT_IN_TUTORIAL_BOOK_ID, BUILT_IN_TUTORIAL_VERSION, createBuiltInTutorialBook, migrateTutorialImages, isBuiltInBook, markTutorialUnread, clearTutorialUnread } from './utils/builtInTutorialBook';
 import { buildCharacterWorldBookSections, buildReadingContextSnapshot, runConversationGeneration } from './utils/readerAiEngine';
+import { DEFAULT_TTS_CONFIG } from './utils/ttsEngine';
 import {
   DEFAULT_NEUMORPHISM_BUBBLE_CSS_PRESET_ID,
   DEFAULT_NEUMORPHISM_BUBBLE_CSS,
@@ -640,6 +641,20 @@ const App: React.FC = () => {
     localStorage.getItem(ACTIVE_RAG_PRESET_ID_STORAGE_KEY) || DEFAULT_RAG_PRESET_ID
   );
 
+  // TTS Config
+  const [ttsConfig, setTtsConfig] = useState<TtsConfig>(() => {
+    try {
+      const saved = localStorage.getItem('app_tts_config');
+      return saved ? { ...DEFAULT_TTS_CONFIG, ...JSON.parse(saved) } : DEFAULT_TTS_CONFIG;
+    } catch { return DEFAULT_TTS_CONFIG; }
+  });
+  const [ttsPresets, setTtsPresets] = useState<TtsPreset[]>(() => {
+    try {
+      const saved = localStorage.getItem('app_tts_presets');
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
+
   // General App Settings (Automation, Appearance)
   const [appSettings, setAppSettings] = useState<AppSettings>(() => {
     try {
@@ -675,8 +690,8 @@ const App: React.FC = () => {
   const [wbCategories, setWbCategories] = useState<string[]>(() => {
     try {
       const saved = localStorage.getItem('app_wb_categories');
-      return saved ? JSON.parse(saved) : ['Uncategorized'];
-    } catch { return ['Uncategorized']; }
+      return saved ? JSON.parse(saved) : ['未分类'];
+    } catch { return ['未分类']; }
   });
 
   // Library User Profile State
@@ -1025,6 +1040,8 @@ const App: React.FC = () => {
   }, [books]);
   useEffect(() => { safeSetStorageItem('app_api_config', JSON.stringify(apiConfig)); }, [apiConfig]);
   useEffect(() => { safeSetStorageItem('app_api_presets', JSON.stringify(apiPresets)); }, [apiPresets]);
+  useEffect(() => { safeSetStorageItem('app_tts_config', JSON.stringify(ttsConfig)); }, [ttsConfig]);
+  useEffect(() => { safeSetStorageItem('app_tts_presets', JSON.stringify(ttsPresets)); }, [ttsPresets]);
   useEffect(() => { safeSetStorageItem('app_settings', JSON.stringify(appSettings)); }, [appSettings]);
   useEffect(() => { safeSetStorageItem('app_personas', JSON.stringify(personas)); }, [personas]);
   useEffect(() => { safeSetStorageItem('app_characters', JSON.stringify(characters)); }, [characters]);
@@ -2148,6 +2165,9 @@ const App: React.FC = () => {
             onSelectCharacter={setActiveCharacterId}
             worldBookEntries={worldBookEntries}
             ragApiConfigResolver={resolveRagApiConfig}
+            ttsConfig={ttsConfig}
+            ttsPresets={ttsPresets}
+            setTtsConfig={setTtsConfig}
           />
         </div>
         {/* Global toasts (shared across all views) */}
@@ -2290,6 +2310,12 @@ const App: React.FC = () => {
             setRagPresets={setRagPresets}
             activeRagPresetId={activeRagPresetId}
             setActiveRagPresetId={setActiveRagPresetId}
+
+            // TTS
+            ttsConfig={ttsConfig}
+            setTtsConfig={setTtsConfig}
+            ttsPresets={ttsPresets}
+            setTtsPresets={setTtsPresets}
           />
         )}
       </div>

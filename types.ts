@@ -82,6 +82,10 @@ export interface ReaderBookState {
   fontOptions?: ReaderFontState[];
   selectedFontId?: string;
   readingPosition?: ReaderPositionState;
+  ttsResumePosition?: {
+    chapterIndex: number;
+    startParagraphIndex: number;
+  };
 }
 
 export interface Book {
@@ -220,6 +224,56 @@ export interface RagPreset {
 
 /** 根据预设ID解析出ApiConfig。返回 undefined 表示使用本地模型。 */
 export type RagApiConfigResolver = (presetId: string | undefined) => ApiConfig | undefined;
+
+// ─── TTS (Text-to-Speech) ───
+
+export type TtsProvider = 'OPENAI_TTS' | 'MINIMAX_T2A' | 'ELEVENLABS' | 'CUSTOM_TTS';
+
+export type MiniMaxRegion = 'cn' | 'intl';
+
+export interface TtsConfig {
+  provider: TtsProvider;
+  endpoint: string;
+  apiKey: string;
+  model: string;
+  voiceId: string;
+  speed: number;
+  chunkSize: number;
+  groupId?: string;
+  minimaxRegion?: MiniMaxRegion;
+  language?: string;
+}
+
+export interface TtsPreset {
+  id: string;
+  name: string;
+  config: TtsConfig;
+}
+
+export interface TtsChunk {
+  id: string;
+  text: string;
+  paragraphIndices: number[];
+  chapterIndex: number | null;
+  charStart: number;
+  charEnd: number;
+  status: 'pending' | 'fetching' | 'ready' | 'playing' | 'played' | 'error';
+  audioBlob?: Blob;
+  error?: string;
+}
+
+export interface TtsPlaybackState {
+  isActive: boolean;
+  isPlaying: boolean;
+  isPaused: boolean;
+  currentChunkIndex: number;
+  currentParagraphIndex: number;
+  chunks: TtsChunk[];
+  chapterIndex: number | null;
+  speed: number;
+  error: string | null;
+  cachedParagraphIndices: number[];
+}
 
 export interface ReaderCssPreset {
   id: string;

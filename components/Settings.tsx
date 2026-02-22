@@ -13,15 +13,17 @@ import {
   Loader2,
   X,
   ImageIcon,
-  Link as LinkIcon
+  Link as LinkIcon,
+  Volume2
 } from 'lucide-react';
-import { SettingsView, Persona, Character, WorldBookEntry, ThemeClasses, ApiConfig, ApiPreset, AppSettings } from './settings/types';
+import { SettingsView, Persona, Character, WorldBookEntry, ThemeClasses, ApiConfig, ApiPreset, AppSettings, TtsConfig, TtsPreset } from './settings/types';
 import { RagPreset } from '../types';
 import PersonaSettings from './settings/PersonaSettings';
 import CharacterSettings from './settings/CharacterSettings';
 import WorldBookSettings from './settings/WorldBookSettings';
 import AppearanceSettings from './settings/AppearanceSettings';
 import ApiSettings from './settings/ApiSettings';
+import TtsSettings from './settings/TtsSettings';
 import ModalPortal from './ModalPortal';
 import { deleteImageByRef, saveImageFile } from '../utils/imageStorage';
 import {
@@ -57,6 +59,10 @@ interface SettingsProps {
   setRagPresets: React.Dispatch<React.SetStateAction<RagPreset[]>>;
   activeRagPresetId: string;
   setActiveRagPresetId: (id: string) => void;
+  ttsConfig: TtsConfig;
+  setTtsConfig: React.Dispatch<React.SetStateAction<TtsConfig>>;
+  ttsPresets: TtsPreset[];
+  setTtsPresets: React.Dispatch<React.SetStateAction<TtsPreset[]>>;
 }
 
 // Custom Feather Icon provided by user
@@ -123,7 +129,11 @@ const Settings: React.FC<SettingsProps> = ({
   ragPresets,
   setRagPresets,
   activeRagPresetId,
-  setActiveRagPresetId
+  setActiveRagPresetId,
+  ttsConfig,
+  setTtsConfig,
+  ttsPresets,
+  setTtsPresets
 }) => {
   const SETTINGS_VIEW_TRANSITION_MS = 260;
   const [currentView, setCurrentView] = useState<SettingsView>('MAIN');
@@ -573,6 +583,31 @@ const Settings: React.FC<SettingsProps> = ({
     );
   }
 
+  if (currentView === 'TTS') {
+    return (
+      <div key="TTS" className={`flex-1 flex flex-col p-6 pb-28 overflow-y-auto no-scrollbar relative ${containerClass} ${animationClass}`}>
+        <TtsSettings
+          config={ttsConfig}
+          setConfig={setTtsConfig}
+          presets={ttsPresets}
+          setPresets={setTtsPresets}
+          theme={{
+            containerClass: theme.containerClass,
+            headingClass: theme.headingClass,
+            cardClass: theme.cardClass,
+            pressedClass: theme.pressedClass,
+            inputClass: theme.inputClass,
+            btnClass: theme.btnClass,
+            activeBorderClass: theme.activeBorderClass,
+            baseBorderClass: theme.baseBorderClass,
+            isDarkMode,
+          }}
+          onBack={() => goBack()}
+        />
+      </div>
+    );
+  }
+
   if (currentView === 'STORAGE') {
     return (
       <div key="STORAGE" className={`flex-1 flex flex-col p-6 pb-28 overflow-y-auto no-scrollbar relative ${containerClass} ${animationClass}`}>
@@ -850,6 +885,24 @@ const Settings: React.FC<SettingsProps> = ({
                   <Key size={22} />
                 </div>
                 <span className={`font-bold ${headingClass}`}>API 配置</span>
+              </div>
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-slate-400 ${isDarkMode ? cardClass : 'neu-flat'}`}>
+                <ChevronRight size={16} />
+              </div>
+           </div>
+
+           <div className="w-full h-[1px] bg-slate-300/20 mx-2" />
+
+           {/* TTS Voice */}
+           <div
+              onClick={() => navigateTo('TTS')}
+              className="p-3 rounded-xl flex items-center justify-between cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 active:scale-[0.98] transition-all"
+           >
+              <div className="flex items-center gap-4">
+                <div className={`${sectionIconClass} text-blue-400`}>
+                  <Volume2 size={22} />
+                </div>
+                <span className={`font-bold ${headingClass}`}>TTS 语音</span>
               </div>
               <div className={`w-8 h-8 rounded-full flex items-center justify-center text-slate-400 ${isDarkMode ? cardClass : 'neu-flat'}`}>
                 <ChevronRight size={16} />

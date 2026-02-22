@@ -10,6 +10,8 @@ import {
   Highlighter,
   List as ListIcon,
   MoreHorizontal,
+  Pause,
+  Play,
   RotateCcw,
   Save,
   Trash2,
@@ -29,8 +31,14 @@ import {
   ReaderHighlightRange,
   ReaderPositionState,
   ReaderSessionSnapshot,
+  TtsConfig,
+  TtsPlaybackState,
 } from '../types';
 import { Character, Persona, WorldBookEntry } from './settings/types';
+import { TtsPlaybackController, TtsPlaybackCallbacks, buildTtsChunks } from '../utils/ttsPlaybackController';
+import { validateTtsConfig } from '../utils/ttsEngine';
+import { clearBookTtsAudio, deleteTtsAudio, getChapterCachedChunkTexts } from '../utils/ttsAudioStorage';
+import type { TtsPreset, TtsChunk } from '../types';
 import { getBookContent, saveBookReaderState } from '../utils/bookContentStorage';
 import { buildConversationKey, persistConversationBucket, readConversationBucket } from '../utils/readerChatRuntime';
 import ReaderMessagePanel from './ReaderMessagePanel';
@@ -59,6 +67,9 @@ interface ReaderProps {
     progress: number;
   } | null;
   ragApiConfigResolver?: RagApiConfigResolver;
+  ttsConfig?: TtsConfig;
+  ttsPresets?: TtsPreset[];
+  setTtsConfig?: (config: TtsConfig) => void;
 }
 
 type ScrollTarget = 'top' | 'bottom';
@@ -616,6 +627,9 @@ const Reader: React.FC<ReaderProps> = ({
   safeAreaBottom = 0,
   ragIndexingState = null,
   ragApiConfigResolver,
+  ttsConfig,
+  ttsPresets,
+  setTtsConfig,
 }) => {
   const [activeFloatingPanel, setActiveFloatingPanel] = useState<FloatingPanel>('none');
   const [closingFloatingPanel, setClosingFloatingPanel] = useState<FloatingPanel | null>(null);
@@ -656,6 +670,16 @@ const Reader: React.FC<ReaderProps> = ({
   const [isReaderAppearanceHydrated, setIsReaderAppearanceHydrated] = useState(false);
   const [isMoreSettingsOpen, setIsMoreSettingsOpen] = useState(false);
   const [floatingPanelTopPx, setFloatingPanelTopPx] = useState(() => Math.max(0, safeAreaTop) + 72);
+
+  // TTS State
+  const [ttsPlaybackState, setTtsPlaybackState] = useState<TtsPlaybackState | null>(null);
+  const [ttsActiveParagraphIndex, setTtsActiveParagraphIndex] = useState<number | null>(null);
+  const [ttsResumePosition, setTtsResumePosition] = useState<ReaderBookState['ttsResumePosition']>(undefined);
+  const [ttsRefreshingParagraphs, setTtsRefreshingParagraphs] = useState<Set<number>>(new Set());
+  const [ttsPersistentCachedParagraphs, setTtsPersistentCachedParagraphs] = useState<number[]>([]);
+  const [ttsAutoStartNextChapter, setTtsAutoStartNextChapter] = useState(false);
+  const ttsControllerRef = useRef<TtsPlaybackController | null>(null);
+  const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
 
   const readerRootRef = useRef<HTMLDivElement>(null);
   const readerViewportContainerRef = useRef<HTMLDivElement>(null);
@@ -923,6 +947,11 @@ const Reader: React.FC<ReaderProps> = ({
       setBookText(chapter.content || '');
       closeFloatingPanel();
       scrollReaderTo(target);
+      // Stop TTS when switching chapters
+      ttsControllerRef.current?.stop();
+      ttsControllerRef.current = null;
+      setTtsPlaybackState(null);
+      setTtsActiveParagraphIndex(null);
     };
 
     if (!direction || selectedChapterIndex === null || index === selectedChapterIndex) {
@@ -1141,11 +1170,13 @@ const Reader: React.FC<ReaderProps> = ({
         const persistedRanges = readerState?.highlightsByChapter;
         const persistedPosition = normalizeReaderPosition(readerState?.readingPosition);
         const persistedBookmarks = normalizeReaderBookmarks(readerState?.bookmarks);
+        const persistedTtsResume = readerState?.ttsResumePosition;
 
         if (cancelled) return;
 
         setChapters(resolvedChapters);
         setHighlightRangesByChapter(persistedRanges || {});
+        setTtsResumePosition(persistedTtsResume);
         setBookmarks(persistedBookmarks);
         hideBookmarkModalImmediately();
         if (persistedColor && isValidHexColor(persistedColor.toUpperCase())) {
@@ -1403,6 +1434,9 @@ const Reader: React.FC<ReaderProps> = ({
       fontObjectUrlsRef.current = [];
       fontLinkNodesRef.current.forEach(node => node.remove());
       fontLinkNodesRef.current = [];
+      // TTS cleanup on unmount
+      ttsControllerRef.current?.destroy();
+      ttsControllerRef.current = null;
     };
   }, []);
 
@@ -1569,6 +1603,11 @@ const Reader: React.FC<ReaderProps> = ({
     return chapter.blocks;
   }, [chapters, selectedChapterIndex]);
 
+  const currentChapterTitle = useMemo(() => {
+    if (selectedChapterIndex === null) return '';
+    return chapters[selectedChapterIndex]?.title?.trim() || '';
+  }, [chapters, selectedChapterIndex]);
+
   const { paragraphs, renderItems } = useMemo(() => {
     const fallbackParagraphs = splitReaderParagraphs(bookText);
     const fallbackRenderItems: ReaderRenderItem[] = fallbackParagraphs.map((_, index) => ({
@@ -1586,6 +1625,7 @@ const Reader: React.FC<ReaderProps> = ({
 
     const nextParagraphs: string[] = [];
     const nextRenderItems: ReaderRenderItem[] = [];
+    let isFirstTextParagraph = true;
 
     currentChapterBlocks.forEach((block, blockIndex) => {
       if (block.type === 'image') {
@@ -1603,6 +1643,17 @@ const Reader: React.FC<ReaderProps> = ({
 
       const blockParagraphs = splitReaderParagraphs(block.text || '');
       blockParagraphs.forEach((paragraphText, localIndex) => {
+        // Skip first text paragraph if it duplicates the chapter title
+        if (isFirstTextParagraph && currentChapterTitle) {
+          isFirstTextParagraph = false;
+          const trimmed = paragraphText.trim();
+          if (trimmed === currentChapterTitle || trimmed === currentChapterTitle.replace(/\s+/g, '')) {
+            return; // skip duplicate title paragraph
+          }
+        } else if (isFirstTextParagraph) {
+          isFirstTextParagraph = false;
+        }
+
         const paragraphIndex = nextParagraphs.length;
         nextParagraphs.push(paragraphText);
         nextRenderItems.push({
@@ -1631,7 +1682,7 @@ const Reader: React.FC<ReaderProps> = ({
       paragraphs: nextParagraphs,
       renderItems: nextRenderItems,
     };
-  }, [bookText, currentChapterBlocks]);
+  }, [bookText, currentChapterBlocks, currentChapterTitle]);
 
   const chapterNormalizedLengths = useMemo(
     () => chapters.map((chapter) => normalizeReaderLayoutText(chapter.content || '').length),
@@ -2299,6 +2350,366 @@ const Reader: React.FC<ReaderProps> = ({
     });
   };
 
+  // ─── TTS Handlers ───
+
+  const ttsScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const ttsPendingScrollParagraphRef = useRef<number | null>(null);
+
+  const scrollToParagraph = useCallback((paragraphIndex: number) => {
+    // Debounce scroll: if a new paragraph arrives within 200ms, skip the previous one
+    ttsPendingScrollParagraphRef.current = paragraphIndex;
+    if (ttsScrollTimerRef.current) return; // already scheduled
+    ttsScrollTimerRef.current = setTimeout(() => {
+      ttsScrollTimerRef.current = null;
+      const targetIdx = ttsPendingScrollParagraphRef.current;
+      if (targetIdx === null) return;
+      ttsPendingScrollParagraphRef.current = null;
+
+      const article = readerArticleRef.current;
+      const scroller = readerScrollRef.current;
+      if (!article || !scroller) return;
+      const el = article.querySelector(`[data-tts-paragraph-index="${targetIdx}"]`);
+      if (!el) return;
+      const targetOffset = scroller.clientHeight * 0.35;
+      const elTop = el.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+      scroller.scrollTo({ top: Math.max(0, elTop - targetOffset), behavior: 'smooth' });
+    }, 200);
+  }, []);
+
+  // Ref for auto-advance: holds a function to advance to next chapter, always up-to-date
+  const ttsAutoAdvanceRef = useRef<(() => void) | null>(null);
+
+  // Helper: prepend chapter title chunk to chunks array if starting from beginning
+  const prependTitleChunk = useCallback((chunks: TtsChunk[], startParagraph: number, chapterIdx: number | null) => {
+    if (startParagraph !== 0 || chapterIdx === null || chunks.length === 0) return chunks;
+    const chapter = chapters[chapterIdx];
+    const title = chapter?.title?.trim();
+    if (!title) return chunks;
+    // Skip if the first paragraph already IS the title (avoid reading it twice)
+    const firstChunkText = chunks[0].text.trim();
+    if (firstChunkText === title || firstChunkText.startsWith(title)) return chunks;
+    const titleChunk: TtsChunk = {
+      id: `tts-title-${Date.now()}`,
+      text: title,
+      paragraphIndices: [-1],
+      chapterIndex: chapterIdx,
+      charStart: 0,
+      charEnd: 0,
+      status: 'pending',
+    };
+    return [titleChunk, ...chunks];
+  }, [chapters]);
+
+  // Shared TTS callbacks factory
+  const makeTtsCallbacks = useCallback((): TtsPlaybackCallbacks => ({
+    onStateChange: (state) => setTtsPlaybackState(state),
+    onParagraphChange: (pIdx) => {
+      setTtsActiveParagraphIndex(pIdx);
+      scrollToParagraph(pIdx);
+    },
+    onError: (err) => console.error('[TTS]', err),
+    onComplete: () => {
+      // Try auto-advance to next chapter
+      if (ttsAutoAdvanceRef.current) {
+        ttsAutoAdvanceRef.current();
+      } else {
+        setTtsActiveParagraphIndex(null);
+        setTtsPlaybackState(null);
+      }
+    },
+  }), [scrollToParagraph]);
+
+  const handleTtsStart = useCallback(() => {
+    if (!ttsConfig || validateTtsConfig(ttsConfig)) return;
+
+    // Build paragraph infos from current chapter
+    const paraInfos = paragraphMeta.map((p, i) => ({
+      text: p.text,
+      start: p.start,
+      end: p.end,
+      index: i,
+    }));
+    if (paraInfos.length === 0) return;
+
+    // Find nearest paragraph from current scroll position
+    let startParagraph = 0;
+    const scroller = readerScrollRef.current;
+    const article = readerArticleRef.current;
+    if (scroller && article) {
+      const scrollerRect = scroller.getBoundingClientRect();
+      const viewportTop = scrollerRect.top + scrollerRect.height * 0.2;
+      const pEls = article.querySelectorAll<HTMLElement>('[data-tts-paragraph-index]');
+      for (const pEl of pEls) {
+        const rect = pEl.getBoundingClientRect();
+        if (rect.bottom >= viewportTop) {
+          startParagraph = parseInt(pEl.getAttribute('data-tts-paragraph-index') || '0', 10);
+          break;
+        }
+      }
+    }
+
+    const chIdx = selectedChapterIndex;
+    let chunks = buildTtsChunks(paraInfos, chIdx, startParagraph, ttsConfig.chunkSize);
+    chunks = prependTitleChunk(chunks, startParagraph, chIdx);
+    if (chunks.length === 0) return;
+
+    if (!ttsAudioRef.current) ttsAudioRef.current = new Audio();
+
+    ttsControllerRef.current?.destroy();
+    const bookId = activeBook?.id || '';
+    const ctrl = new TtsPlaybackController(ttsAudioRef.current, ttsConfig, makeTtsCallbacks(), bookId);
+    ttsControllerRef.current = ctrl;
+    ctrl.start(chunks);
+    setTtsResumePosition(undefined);
+  }, [ttsConfig, paragraphMeta, selectedChapterIndex, scrollToParagraph, activeBook, prependTitleChunk, makeTtsCallbacks]);
+
+  const handleTtsStop = useCallback(() => {
+    ttsControllerRef.current?.stop();
+    ttsControllerRef.current = null;
+    setTtsPlaybackState(null);
+    setTtsActiveParagraphIndex(null);
+  }, []);
+
+  const handleTtsPause = useCallback(() => {
+    ttsControllerRef.current?.pause();
+  }, []);
+
+  const handleTtsResume = useCallback(() => {
+    ttsControllerRef.current?.resume();
+  }, []);
+
+  const handleTtsPresetSelect = useCallback((presetId: string) => {
+    const preset = ttsPresets?.find(p => p.id === presetId);
+    if (preset && setTtsConfig) {
+      setTtsConfig(preset.config);
+      if (ttsControllerRef.current) {
+        ttsControllerRef.current.updateConfig(preset.config);
+      }
+    }
+  }, [ttsPresets, setTtsConfig]);
+
+  const handleTtsLanguageChange = useCallback((language: string) => {
+    if (!ttsConfig || !setTtsConfig) return;
+    const updated = { ...ttsConfig, language };
+    setTtsConfig(updated);
+    if (ttsControllerRef.current) {
+      ttsControllerRef.current.updateConfig(updated);
+    }
+  }, [ttsConfig, setTtsConfig]);
+
+  const handleTtsClearCache = useCallback(async () => {
+    if (ttsControllerRef.current) {
+      await ttsControllerRef.current.clearAllAudioCache();
+    } else if (activeBook?.id) {
+      await clearBookTtsAudio(activeBook.id);
+    }
+    setTtsPersistentCachedParagraphs([]);
+  }, [activeBook]);
+
+  const handleTtsJumpToParagraph = useCallback((paragraphIndex: number) => {
+    ttsControllerRef.current?.jumpToParagraph(paragraphIndex);
+  }, []);
+
+  const handleTtsStartFromParagraph = useCallback((paragraphIndex: number) => {
+    if (!ttsConfig || validateTtsConfig(ttsConfig)) return;
+    const paraInfos = paragraphMeta.map((p, i) => ({
+      text: p.text, start: p.start, end: p.end, index: i,
+    }));
+    if (paraInfos.length === 0) return;
+    const chIdx = selectedChapterIndex;
+    // -1 means start from chapter title; build chunks from paragraph 0 and prepend title
+    const startParagraph = paragraphIndex === -1 ? 0 : paragraphIndex;
+    let chunks = buildTtsChunks(paraInfos, chIdx, startParagraph, ttsConfig.chunkSize);
+    chunks = prependTitleChunk(chunks, startParagraph, chIdx);
+    if (chunks.length === 0) return;
+    if (!ttsAudioRef.current) ttsAudioRef.current = new Audio();
+    ttsControllerRef.current?.destroy();
+    const bookId = activeBook?.id || '';
+    const ctrl = new TtsPlaybackController(ttsAudioRef.current, ttsConfig, makeTtsCallbacks(), bookId);
+    ttsControllerRef.current = ctrl;
+    ctrl.start(chunks);
+    setTtsResumePosition(undefined);
+  }, [ttsConfig, paragraphMeta, selectedChapterIndex, activeBook, prependTitleChunk, makeTtsCallbacks]);
+
+  const handleTtsRefreshParagraph = useCallback(async (paragraphIndex: number) => {
+    setTtsRefreshingParagraphs(prev => new Set(prev).add(paragraphIndex));
+    try {
+      if (ttsControllerRef.current) {
+        // TTS active: refresh via controller (deletes IndexedDB + re-fetches + plays)
+        await ttsControllerRef.current.refreshParagraph(paragraphIndex);
+      } else {
+        // TTS not active: delete IndexedDB cache for this paragraph's chunks, then start playback
+        const bookId = activeBook?.id;
+        if (bookId && ttsConfig) {
+          if (paragraphIndex === -1) {
+            // Title chunk: delete by chapter title text
+            const title = currentChapterTitle;
+            if (title) {
+              try { await deleteTtsAudio(bookId, selectedChapterIndex ?? 0, title); } catch { /* ignore */ }
+            }
+          } else {
+            const paraInfos = paragraphMeta.map((p, i) => ({
+              text: p.text, start: p.start, end: p.end, index: i,
+            }));
+            const chunks = buildTtsChunks(paraInfos, selectedChapterIndex, 0, ttsConfig.chunkSize);
+            for (const chunk of chunks) {
+              if (chunk.paragraphIndices.includes(paragraphIndex)) {
+                try { await deleteTtsAudio(bookId, chunk.chapterIndex ?? 0, chunk.text); } catch { /* ignore */ }
+              }
+            }
+          }
+        }
+        // Start TTS from this paragraph (will re-generate since cache was deleted)
+        handleTtsStartFromParagraph(paragraphIndex);
+      }
+    } finally {
+      setTtsRefreshingParagraphs(prev => {
+        const next = new Set(prev);
+        next.delete(paragraphIndex);
+        return next;
+      });
+    }
+  }, [activeBook?.id, ttsConfig, paragraphMeta, selectedChapterIndex, currentChapterTitle, handleTtsStartFromParagraph]);
+
+  const handleTtsSpeedChange = useCallback((speed: number) => {
+    if (ttsControllerRef.current) {
+      ttsControllerRef.current.setSpeed(speed);
+    }
+    if (ttsConfig && setTtsConfig) {
+      setTtsConfig({ ...ttsConfig, speed });
+    }
+  }, [ttsConfig, setTtsConfig]);
+
+  const handleTtsResumeFromSaved = useCallback(() => {
+    if (!ttsResumePosition || !ttsConfig || validateTtsConfig(ttsConfig)) return;
+
+    // Navigate to the saved chapter if different
+    if (ttsResumePosition.chapterIndex !== selectedChapterIndex) return;
+
+    const paraInfos = paragraphMeta.map((p, i) => ({
+      text: p.text, start: p.start, end: p.end, index: i,
+    }));
+    if (paraInfos.length === 0) return;
+
+    const startParagraph = Math.min(ttsResumePosition.startParagraphIndex, paraInfos.length - 1);
+    const chIdx = selectedChapterIndex;
+    let chunks = buildTtsChunks(paraInfos, chIdx, startParagraph, ttsConfig.chunkSize);
+    chunks = prependTitleChunk(chunks, startParagraph, chIdx);
+    if (chunks.length === 0) return;
+
+    if (!ttsAudioRef.current) ttsAudioRef.current = new Audio();
+
+    ttsControllerRef.current?.destroy();
+    const bookId = activeBook?.id || '';
+    const ctrl = new TtsPlaybackController(ttsAudioRef.current, ttsConfig, makeTtsCallbacks(), bookId);
+    ttsControllerRef.current = ctrl;
+    ctrl.start(chunks);
+    setTtsResumePosition(undefined);
+  }, [ttsResumePosition, ttsConfig, selectedChapterIndex, paragraphMeta, activeBook, prependTitleChunk, makeTtsCallbacks]);
+
+  // Keep auto-advance ref up-to-date with latest chapter state
+  useEffect(() => {
+    ttsAutoAdvanceRef.current = () => {
+      if (selectedChapterIndex === null || !chapters.length) {
+        setTtsActiveParagraphIndex(null);
+        setTtsPlaybackState(null);
+        return;
+      }
+      const nextIdx = selectedChapterIndex + 1;
+      if (nextIdx >= chapters.length) {
+        // Last chapter — playback complete
+        setTtsActiveParagraphIndex(null);
+        setTtsPlaybackState(null);
+        return;
+      }
+      // Switch to next chapter without stopping TTS state
+      const nextChapter = chapters[nextIdx];
+      if (!nextChapter) {
+        setTtsActiveParagraphIndex(null);
+        setTtsPlaybackState(null);
+        return;
+      }
+      ttsControllerRef.current?.destroy();
+      ttsControllerRef.current = null;
+      setSelectedChapterIndex(nextIdx);
+      setBookText(nextChapter.content || '');
+      scrollReaderTo('top');
+      setTtsAutoStartNextChapter(true);
+    };
+  }, [selectedChapterIndex, chapters]);
+
+  // Auto-start TTS after chapter switch triggered by auto-advance
+  useEffect(() => {
+    if (!ttsAutoStartNextChapter || paragraphMeta.length === 0 || !ttsConfig) return;
+    setTtsAutoStartNextChapter(false);
+
+    const paraInfos = paragraphMeta.map((p, i) => ({
+      text: p.text, start: p.start, end: p.end, index: i,
+    }));
+    const chIdx = selectedChapterIndex;
+    let chunks = buildTtsChunks(paraInfos, chIdx, 0, ttsConfig.chunkSize);
+    chunks = prependTitleChunk(chunks, 0, chIdx);
+    if (chunks.length === 0) {
+      setTtsActiveParagraphIndex(null);
+      setTtsPlaybackState(null);
+      return;
+    }
+
+    if (!ttsAudioRef.current) ttsAudioRef.current = new Audio();
+    const bookId = activeBook?.id || '';
+    const ctrl = new TtsPlaybackController(ttsAudioRef.current, ttsConfig, makeTtsCallbacks(), bookId);
+    ttsControllerRef.current = ctrl;
+    ctrl.start(chunks);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ttsAutoStartNextChapter, paragraphMeta]);
+
+  // Load persistent cached paragraph indices from IndexedDB on chapter change
+  const ttsCacheVersionRef = useRef(0);
+  const refreshTtsPersistentCache = useCallback(() => { ttsCacheVersionRef.current++; }, []);
+  useEffect(() => {
+    const bookId = activeBook?.id;
+    if (!bookId || selectedChapterIndex == null || !ttsConfig || paragraphMeta.length === 0) {
+      setTtsPersistentCachedParagraphs([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const cachedTexts = await getChapterCachedChunkTexts(bookId, selectedChapterIndex);
+        if (cancelled || cachedTexts.size === 0) {
+          if (!cancelled) setTtsPersistentCachedParagraphs([]);
+          return;
+        }
+        // Build chunks to map cached texts → paragraph indices
+        const paraInfos = paragraphMeta.map((p, i) => ({
+          text: p.text, start: p.start, end: p.end, index: i,
+        }));
+        const chunks = buildTtsChunks(paraInfos, selectedChapterIndex, 0, ttsConfig.chunkSize);
+        const cachedIndicesSet = new Set<number>();
+        // Check if chapter title audio is cached
+        const chTitle = chapters[selectedChapterIndex]?.title?.trim();
+        if (chTitle && cachedTexts.has(chTitle)) {
+          cachedIndicesSet.add(-1);
+        }
+        for (const chunk of chunks) {
+          if (cachedTexts.has(chunk.text)) {
+            for (const idx of chunk.paragraphIndices) cachedIndicesSet.add(idx);
+          }
+        }
+        if (!cancelled) setTtsPersistentCachedParagraphs(Array.from(cachedIndicesSet));
+      } catch {
+        if (!cancelled) setTtsPersistentCachedParagraphs([]);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeBook?.id, selectedChapterIndex, paragraphMeta, ttsConfig?.chunkSize, ttsCacheVersionRef.current]);
+
+  // Refresh persistent cache when TTS playback state changes (new audio generated)
+  useEffect(() => {
+    if (ttsPlaybackState) refreshTtsPersistentCache();
+  }, [ttsPlaybackState, refreshTtsPersistentCache]);
+
   const clearHighlightDragState = () => {
     setPendingHighlightRange(null);
     highlightDragRef.current = { active: false, pointerId: null, startIndex: null };
@@ -2689,16 +3100,31 @@ const Reader: React.FC<ReaderProps> = ({
   const handleBackClick = () => {
     const sessionSnapshot = buildReaderSessionSnapshot();
     if (sessionSnapshot) {
+      // Save TTS resume position if currently playing
+      let ttsResumePosition: ReaderBookState['ttsResumePosition'];
+      if (ttsControllerRef.current && ttsPlaybackState?.isActive) {
+        const pIdx = ttsControllerRef.current.getCurrentParagraphIndex();
+        if (pIdx >= 0) {
+          ttsResumePosition = {
+            chapterIndex: selectedChapterIndex,
+            startParagraphIndex: pIdx,
+          };
+        }
+      }
       const readerState: ReaderBookState = {
         highlightColor,
         highlightsByChapter: highlightRangesByChapter,
         bookmarks: sortedBookmarks,
         readingPosition: sessionSnapshot.readingPosition,
+        ...(ttsResumePosition ? { ttsResumePosition } : {}),
       };
       saveBookReaderState(sessionSnapshot.bookId, readerState).catch((error) => {
         console.error('Failed to persist reader state on exit:', error);
       });
     }
+    // Stop TTS on exit
+    ttsControllerRef.current?.destroy();
+    ttsControllerRef.current = null;
     onBack(sessionSnapshot || undefined);
   };
 
@@ -3396,6 +3822,76 @@ const Reader: React.FC<ReaderProps> = ({
             {activeBook && !isLoadingBookContent && renderItems.length === 0 && (
               <p className="mb-6 indent-8 opacity-70">{'\u8fd9\u672c\u4e66\u8fd8\u6ca1\u6709\u6b63\u6587\u5185\u5bb9\u3002'}</p>
             )}
+            {activeBook && !isLoadingBookContent && currentChapterTitle && (() => {
+              const isTitleCurrentTts = ttsPlaybackState?.isActive && ttsActiveParagraphIndex === -1;
+              const isTitleActiveCached = ttsPlaybackState?.isActive && ttsPlaybackState.cachedParagraphIndices?.includes(-1);
+              const isTitlePersistentCached = ttsPersistentCachedParagraphs.includes(-1);
+              const showTitleTtsIcons = isTitleCurrentTts || isTitleActiveCached || isTitlePersistentCached;
+              const isTitleRefreshing = ttsRefreshingParagraphs.has(-1);
+              return (
+                <>
+                  {showTitleTtsIcons && (
+                    <div className="flex items-center gap-2 mb-1.5 -mt-1 not-prose" style={{ textIndent: 0 }}>
+                      {isTitleCurrentTts ? (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); ttsPlaybackState?.isPaused ? handleTtsResume() : handleTtsPause(); }}
+                          className={`w-7 h-7 rounded-full flex items-center justify-center transition-all active:scale-90 ${
+                            isDarkMode
+                              ? 'bg-rose-500/20 text-rose-300 hover:bg-rose-500/30'
+                              : 'bg-rose-100 text-rose-500 hover:bg-rose-200'
+                          }`}
+                        >
+                          {ttsPlaybackState?.isPaused ? <Play size={14} fill="currentColor" /> : <Pause size={14} fill="currentColor" />}
+                        </button>
+                      ) : ttsPlaybackState?.isActive ? (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleTtsJumpToParagraph(-1); }}
+                          className={`w-7 h-7 rounded-full flex items-center justify-center transition-all active:scale-90 ${
+                            isDarkMode
+                              ? 'bg-slate-600/30 text-slate-400 hover:bg-slate-600/50'
+                              : 'bg-slate-100 text-slate-400 hover:bg-slate-200'
+                          }`}
+                        >
+                          <Play size={12} fill="currentColor" />
+                        </button>
+                      ) : (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleTtsStartFromParagraph(-1); }}
+                          className={`w-7 h-7 rounded-full flex items-center justify-center transition-all active:scale-90 ${
+                            isDarkMode
+                              ? 'bg-slate-600/30 text-slate-400 hover:bg-slate-600/50'
+                              : 'bg-slate-100 text-slate-400 hover:bg-slate-200'
+                          }`}
+                        >
+                          <Play size={12} fill="currentColor" />
+                        </button>
+                      )}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleTtsRefreshParagraph(-1); }}
+                        className={`w-7 h-7 rounded-full flex items-center justify-center transition-all active:scale-90 ${
+                          isDarkMode
+                            ? 'bg-slate-600/30 text-slate-400 hover:bg-slate-600/50'
+                            : 'bg-slate-100 text-slate-400 hover:bg-slate-200'
+                        }`}
+                      >
+                        <RotateCcw size={13} className={isTitleRefreshing ? 'animate-spin' : ''} />
+                      </button>
+                    </div>
+                  )}
+                  <p
+                    className={`text-center font-bold mb-6 transition-colors duration-300 ${
+                      ttsActiveParagraphIndex === -1
+                        ? (isDarkMode ? 'bg-rose-500/10 rounded-lg -mx-2 px-2 py-1' : 'bg-rose-100/60 rounded-lg -mx-2 px-2 py-1')
+                        : ''
+                    }`}
+                    style={{ textIndent: 0 }}
+                    data-tts-paragraph-index={-1}
+                  >
+                    {currentChapterTitle}
+                  </p>
+                </>
+              );
+            })()}
             {activeBook && !isLoadingBookContent && renderItems.map((item) => {
               if (item.type === 'image') {
                 return (
@@ -3418,35 +3914,97 @@ const Reader: React.FC<ReaderProps> = ({
 
               const paragraph = paragraphRenderData[item.paragraphIndex];
               if (!paragraph) return null;
+              const isCurrentTtsParagraph = ttsPlaybackState?.isActive && ttsActiveParagraphIndex === item.paragraphIndex;
+              const isActiveCachedParagraph = ttsPlaybackState?.isActive && ttsPlaybackState.cachedParagraphIndices?.includes(item.paragraphIndex);
+              const isPersistentCachedParagraph = ttsPersistentCachedParagraphs.includes(item.paragraphIndex);
+              const showTtsIcons = isCurrentTtsParagraph || isActiveCachedParagraph || isPersistentCachedParagraph;
+              const isRefreshing = ttsRefreshingParagraphs.has(item.paragraphIndex);
               return (
-                <p key={item.key} className="mb-6 indent-8">
-                  {paragraph.segments.map(segment => (
-                    <span
-                      key={`${segment.start}-${segment.end}-${segment.color || 'plain'}`}
-                      data-reader-segment="1"
-                      data-start={segment.start}
-                      className={segment.color ? 'rounded-[0.14em]' : undefined}
-                      style={{
-                        ...(segment.color ? { backgroundColor: resolveHighlightBackgroundColor(segment.color, isDarkMode) } : {}),
-                        ...(segment.hasAiUnderline
-                          ? {
-                              textDecorationLine: 'underline',
-                              textDecorationStyle: 'dashed',
-                              textDecorationColor: isDarkMode
-                                ? 'rgb(var(--theme-300) / 0.95)'
-                                : 'rgb(var(--theme-500) / 0.92)',
-                              textDecorationThickness: '1.5px',
-                              textUnderlineOffset: '0.16em',
-                              textDecorationSkipInk: 'none',
-                              WebkitTextDecorationSkip: 'none',
-                            }
-                          : {}),
-                      }}
-                    >
-                      {segment.text}
-                    </span>
-                  ))}
-                </p>
+                <React.Fragment key={item.key}>
+                  {showTtsIcons && (
+                    <div className="flex items-center gap-2 mb-1.5 -mt-1 not-prose" style={{ textIndent: 0 }}>
+                      {isCurrentTtsParagraph ? (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); ttsPlaybackState?.isPaused ? handleTtsResume() : handleTtsPause(); }}
+                          className={`w-7 h-7 rounded-full flex items-center justify-center transition-all active:scale-90 ${
+                            isDarkMode
+                              ? 'bg-rose-500/20 text-rose-300 hover:bg-rose-500/30'
+                              : 'bg-rose-100 text-rose-500 hover:bg-rose-200'
+                          }`}
+                        >
+                          {ttsPlaybackState?.isPaused ? <Play size={14} fill="currentColor" /> : <Pause size={14} fill="currentColor" />}
+                        </button>
+                      ) : ttsPlaybackState?.isActive ? (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleTtsJumpToParagraph(item.paragraphIndex); }}
+                          className={`w-7 h-7 rounded-full flex items-center justify-center transition-all active:scale-90 ${
+                            isDarkMode
+                              ? 'bg-slate-600/30 text-slate-400 hover:bg-slate-600/50'
+                              : 'bg-slate-100 text-slate-400 hover:bg-slate-200'
+                          }`}
+                        >
+                          <Play size={12} fill="currentColor" />
+                        </button>
+                      ) : (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleTtsStartFromParagraph(item.paragraphIndex); }}
+                          className={`w-7 h-7 rounded-full flex items-center justify-center transition-all active:scale-90 ${
+                            isDarkMode
+                              ? 'bg-slate-600/30 text-slate-400 hover:bg-slate-600/50'
+                              : 'bg-slate-100 text-slate-400 hover:bg-slate-200'
+                          }`}
+                        >
+                          <Play size={12} fill="currentColor" />
+                        </button>
+                      )}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleTtsRefreshParagraph(item.paragraphIndex); }}
+                        className={`w-7 h-7 rounded-full flex items-center justify-center transition-all active:scale-90 ${
+                          isDarkMode
+                            ? 'bg-slate-600/30 text-slate-400 hover:bg-slate-600/50'
+                            : 'bg-slate-100 text-slate-400 hover:bg-slate-200'
+                        }`}
+                      >
+                        <RotateCcw size={13} className={isRefreshing ? 'animate-spin' : ''} />
+                      </button>
+                    </div>
+                  )}
+                  <p
+                    className={`mb-6 indent-8 transition-colors duration-300 ${
+                      ttsActiveParagraphIndex === item.paragraphIndex
+                        ? (isDarkMode ? 'bg-rose-500/10 rounded-lg -mx-2 px-2 py-1' : 'bg-rose-100/60 rounded-lg -mx-2 px-2 py-1')
+                        : ''
+                    }`}
+                    data-tts-paragraph-index={item.paragraphIndex}
+                  >
+                    {paragraph.segments.map(segment => (
+                      <span
+                        key={`${segment.start}-${segment.end}-${segment.color || 'plain'}`}
+                        data-reader-segment="1"
+                        data-start={segment.start}
+                        className={segment.color ? 'rounded-[0.14em]' : undefined}
+                        style={{
+                          ...(segment.color ? { backgroundColor: resolveHighlightBackgroundColor(segment.color, isDarkMode) } : {}),
+                          ...(segment.hasAiUnderline
+                            ? {
+                                textDecorationLine: 'underline',
+                                textDecorationStyle: 'dashed',
+                                textDecorationColor: isDarkMode
+                                  ? 'rgb(var(--theme-300) / 0.95)'
+                                  : 'rgb(var(--theme-500) / 0.92)',
+                                textDecorationThickness: '1.5px',
+                                textUnderlineOffset: '0.16em',
+                                textDecorationSkipInk: 'none',
+                                WebkitTextDecorationSkip: 'none',
+                              }
+                            : {}),
+                        }}
+                      >
+                        {segment.text}
+                      </span>
+                    ))}
+                  </p>
+                </React.Fragment>
               );
             })}
           </article>
@@ -3470,6 +4028,7 @@ const Reader: React.FC<ReaderProps> = ({
             />
           </div>
         )}
+
       </div>
 
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 hidden">
@@ -3508,6 +4067,17 @@ const Reader: React.FC<ReaderProps> = ({
         isMoreSettingsOpen={isMoreSettingsOpen}
         onCloseMoreSettings={() => setIsMoreSettingsOpen(false)}
         ragApiConfigResolver={ragApiConfigResolver}
+        ttsConfig={ttsConfig ?? null}
+        ttsPresets={ttsPresets || []}
+        ttsPlaybackState={ttsPlaybackState}
+        onTtsStartFromCurrentPosition={handleTtsStart}
+        onTtsStop={handleTtsStop}
+        onTtsPresetSelect={handleTtsPresetSelect}
+        onTtsLanguageChange={handleTtsLanguageChange}
+        onTtsSpeedChange={handleTtsSpeedChange}
+        onTtsClearCache={handleTtsClearCache}
+        ttsResumePosition={ttsResumePosition}
+        onTtsResumeFromSaved={handleTtsResumeFromSaved}
       />
     </div>
   );

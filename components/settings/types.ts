@@ -1,6 +1,6 @@
-import { ApiProvider, ApiConfig, ApiPreset, AppSettings } from '../../types';
+import { ApiProvider, ApiConfig, ApiPreset, AppSettings, TtsConfig, TtsPreset } from '../../types';
 
-export type SettingsView = 'MAIN' | 'PERSONA' | 'CHARACTER' | 'WORLDBOOK' | 'API' | 'STORAGE' | 'APPEARANCE';
+export type SettingsView = 'MAIN' | 'PERSONA' | 'CHARACTER' | 'WORLDBOOK' | 'API' | 'STORAGE' | 'APPEARANCE' | 'TTS';
 
 export interface Persona {
   id: string;
@@ -42,4 +42,4 @@ export interface ThemeClasses {
   isDarkMode: boolean;
 }
 
-export type { ApiProvider, ApiConfig, ApiPreset, AppSettings };
+export type { ApiProvider, ApiConfig, ApiPreset, AppSettings, TtsConfig, TtsPreset };

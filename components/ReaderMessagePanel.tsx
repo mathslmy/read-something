@@ -10,7 +10,8 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { ApiConfig, ApiPreset, AppSettings, Book, Chapter, RagApiConfigResolver, ReaderSummaryCard, ReaderHighlightRange, ReaderPositionState } from '../types';
+import { ApiConfig, ApiPreset, AppSettings, Book, Chapter, RagApiConfigResolver, ReaderBookState, ReaderSummaryCard, ReaderHighlightRange, ReaderPositionState, TtsConfig, TtsPlaybackState } from '../types';
+import type { TtsPreset } from '../types';
 import { Character, Persona, WorldBookEntry } from './settings/types';
 import ResolvedImage from './ResolvedImage';
 import ReaderMoreSettingsPanel, { ReaderArchiveOption } from './ReaderMoreSettingsPanel';
@@ -84,6 +85,17 @@ interface ReaderMessagePanelProps {
   isMoreSettingsOpen: boolean;
   onCloseMoreSettings: () => void;
   ragApiConfigResolver?: RagApiConfigResolver;
+  ttsConfig: TtsConfig | null;
+  ttsPresets: TtsPreset[];
+  ttsPlaybackState: TtsPlaybackState | null;
+  onTtsStartFromCurrentPosition: () => void;
+  onTtsStop: () => void;
+  onTtsPresetSelect: (presetId: string) => void;
+  onTtsLanguageChange: (language: string) => void;
+  onTtsSpeedChange: (speed: number) => void;
+  onTtsClearCache: () => void;
+  ttsResumePosition?: ReaderBookState['ttsResumePosition'];
+  onTtsResumeFromSaved: () => void;
 }
 
 interface ContextMenuState {
@@ -465,6 +477,17 @@ const ReaderMessagePanel: React.FC<ReaderMessagePanelProps> = ({
   isMoreSettingsOpen,
   onCloseMoreSettings,
   ragApiConfigResolver,
+  ttsConfig,
+  ttsPresets,
+  ttsPlaybackState,
+  onTtsStartFromCurrentPosition,
+  onTtsStop,
+  onTtsPresetSelect,
+  onTtsLanguageChange,
+  onTtsSpeedChange,
+  onTtsClearCache,
+  ttsResumePosition,
+  onTtsResumeFromSaved,
 }) => {
   const [isAiPanelOpen, setIsAiPanelOpen] = useState(true);
   const [isAiFabOpening, setIsAiFabOpening] = useState(false);
@@ -3243,6 +3266,17 @@ const ReaderMessagePanel: React.FC<ReaderMessagePanelProps> = ({
         totalMessages={messages.length}
         summaryTaskRunning={summaryTaskRunning}
         sessionPromptTokenEstimate={sessionPromptTokenEstimate}
+        ttsConfig={ttsConfig}
+        ttsPresets={ttsPresets}
+        ttsPlaybackState={ttsPlaybackState}
+        onTtsStartFromCurrentPosition={onTtsStartFromCurrentPosition}
+        onTtsStop={onTtsStop}
+        onTtsPresetSelect={onTtsPresetSelect}
+        onTtsLanguageChange={onTtsLanguageChange}
+        onTtsSpeedChange={onTtsSpeedChange}
+        onTtsClearCache={onTtsClearCache}
+        ttsResumePosition={ttsResumePosition}
+        onTtsResumeFromSaved={onTtsResumeFromSaved}
       />
 
       {contextMenu && !isDeleteMode && (
