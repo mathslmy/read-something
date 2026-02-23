@@ -397,11 +397,22 @@ const StudyHub: React.FC<StudyHubProps> = ({
 
     const element = node as HTMLElement;
     const tag = element.tagName.toLowerCase();
-    if (tag === 'br') return '\n';
+    // <br> within a block element is either a browser placeholder or a soft break;
+    // our markdown format doesn't support inline breaks, so emit a space instead of
+    // '\n' to prevent single paragraphs from being split into multiple blocks.
+    if (tag === 'br') return ' ';
 
     const childText = Array.from(element.childNodes).map(extractInlineMarkdownFromNode).join('');
-    if (tag === 'strong' || tag === 'b') return childText ? `**${childText}**` : '';
-    if (tag === 'em' || tag === 'i') return childText ? `*${childText}*` : '';
+    if (tag === 'strong' || tag === 'b') {
+      const trimmed = childText.trim();
+      if (!trimmed) return '';
+      return `**${trimmed}**`;
+    }
+    if (tag === 'em' || tag === 'i') {
+      const trimmed = childText.trim();
+      if (!trimmed) return '';
+      return `*${trimmed}*`;
+    }
     return childText;
   };
 
@@ -477,13 +488,18 @@ const StudyHub: React.FC<StudyHubProps> = ({
     noteEditorSyncingRef.current = false;
   }, [renderMarkdownToHtml]);
 
-  const handleNoteEditorInput = useCallback(() => {
-    if (noteEditorSyncingRef.current) return;
+  // Sync markdown from editor DOM — does NOT touch pending inline state.
+  const syncNoteContentFromEditor = useCallback(() => {
     const editor = noteEditorRef.current;
     if (!editor) return;
     const markdown = extractMarkdownFromEditorHtml(editor.innerHTML);
     setNoteContent(markdown);
   }, [extractMarkdownFromEditorHtml]);
+
+  const handleNoteEditorInput = useCallback(() => {
+    if (noteEditorSyncingRef.current) return;
+    syncNoteContentFromEditor();
+  }, [syncNoteContentFromEditor]);
 
   const areNoteToolbarStatesEqual = (left: NoteToolbarState, right: NoteToolbarState) =>
     left.block === right.block &&
@@ -493,31 +509,24 @@ const StudyHub: React.FC<StudyHubProps> = ({
     left.bulletList === right.bulletList;
 
   const resolveNoteBlockStyle = useCallback((): NoteBlockStyleTag | null => {
-    let raw = '';
-    try {
-      raw = String(document.queryCommandValue('formatBlock') || '')
-        .replace(/["'<>]/g, '')
-        .trim()
-        .toLowerCase();
-    } catch {
-      return null;
-    }
-
-    if (!raw || raw === 'normal' || raw === 'div' || raw === 'section' || raw === 'article') return 'p';
-    if (raw === 'p' || raw === 'h1' || raw === 'h2' || raw === 'h3') return raw;
-    return null;
-  }, []);
-
-  const isSelectionInNoteEditor = useCallback(() => {
     const editor = noteEditorRef.current;
-    if (!editor) return false;
     const selection = window.getSelection();
-    if (!selection || selection.rangeCount === 0) return false;
+    if (!editor || !selection || selection.rangeCount === 0) return null;
+
     const anchorNode = selection.anchorNode;
-    const focusNode = selection.focusNode;
-    if (!anchorNode || !focusNode) return false;
-    return editor.contains(anchorNode) && editor.contains(focusNode);
+    if (!anchorNode || !editor.contains(anchorNode)) return null;
+
+    let probe: Node | null = anchorNode;
+    while (probe && probe !== editor) {
+      if (probe.nodeType === Node.ELEMENT_NODE) {
+        const tag = (probe as HTMLElement).tagName.toLowerCase();
+        if (tag === 'h1' || tag === 'h2' || tag === 'h3' || tag === 'p') return tag as NoteBlockStyleTag;
+      }
+      probe = probe.parentNode;
+    }
+    return 'p';
   }, []);
+
 
   const resolveNoteSelectionSnapshot = useCallback((): {
     selection: Selection;
@@ -615,24 +624,44 @@ const StudyHub: React.FC<StudyHubProps> = ({
   }, [placeCaretAtNodeStart, resolveNoteSelectionSnapshot]);
 
   const refreshNoteToolbarState = useCallback(() => {
-    if (!isSelectionInNoteEditor()) return;
-    const safeQueryCommandState = (command: string) => {
-      try {
-        return document.queryCommandState(command);
-      } catch {
-        return false;
+    const editor = noteEditorRef.current;
+    const selection = window.getSelection();
+    if (!editor || !selection || selection.rangeCount === 0) return;
+    const anchorNode = selection.anchorNode;
+    if (!anchorNode || !editor.contains(anchorNode)) return;
+
+    // DOM traversal for block type and list detection
+    let block: NoteBlockStyleTag | null = null;
+    let inOrderedList = false;
+    let inBulletList = false;
+
+    let probe: Node | null = anchorNode;
+    while (probe && probe !== editor) {
+      if (probe.nodeType === Node.ELEMENT_NODE) {
+        const tag = (probe as HTMLElement).tagName.toLowerCase();
+        if (!block && (tag === 'h1' || tag === 'h2' || tag === 'h3' || tag === 'p')) block = tag as NoteBlockStyleTag;
+        if (!inOrderedList && tag === 'ol') inOrderedList = true;
+        if (!inBulletList && tag === 'ul') inBulletList = true;
       }
-    };
+      probe = probe.parentNode;
+    }
+    if (!block && !inOrderedList && !inBulletList) block = 'p';
+
+    // Use queryCommandState for bold/italic — this is the browser's authoritative
+    // source of truth, including its internal "pending" state for collapsed cursors.
+    // Reliable now that headings have font-weight: normal !important in CSS.
+    const hasBold = document.queryCommandState('bold');
+    const hasItalic = document.queryCommandState('italic');
 
     const nextState: NoteToolbarState = {
-      block: resolveNoteBlockStyle(),
-      bold: safeQueryCommandState('bold'),
-      italic: safeQueryCommandState('italic'),
-      orderedList: safeQueryCommandState('insertOrderedList'),
-      bulletList: safeQueryCommandState('insertUnorderedList'),
+      block: block || null,
+      bold: hasBold,
+      italic: hasItalic,
+      orderedList: inOrderedList,
+      bulletList: inBulletList,
     };
     setNoteToolbarState((prev) => (areNoteToolbarStatesEqual(prev, nextState) ? prev : nextState));
-  }, [isSelectionInNoteEditor, resolveNoteBlockStyle]);
+  }, []);
 
   const runNoteEditorCommand = useCallback((command: string, value?: string) => {
     const editor = noteEditorRef.current;
@@ -640,10 +669,10 @@ const StudyHub: React.FC<StudyHubProps> = ({
     editor.focus();
     document.execCommand(command, false, value);
     window.requestAnimationFrame(() => {
-      handleNoteEditorInput();
+      syncNoteContentFromEditor();
       refreshNoteToolbarState();
     });
-  }, [handleNoteEditorInput, refreshNoteToolbarState]);
+  }, [syncNoteContentFromEditor, refreshNoteToolbarState]);
 
   const toggleNoteBlockStyle = useCallback((blockTag: NoteBlockStyleTag) => {
     const snapshot = resolveNoteSelectionSnapshot();
@@ -657,16 +686,26 @@ const StudyHub: React.FC<StudyHubProps> = ({
         : !!snapshot.editor.textContent?.trim();
       if (hasExistingText) {
         insertTypingTargetAfterCurrentBlock(next);
+        window.requestAnimationFrame(() => {
+          syncNoteContentFromEditor();
+          refreshNoteToolbarState();
+        });
         return;
       }
     }
 
     runNoteEditorCommand('formatBlock', next);
-  }, [insertTypingTargetAfterCurrentBlock, isNoteBlockEffectivelyEmpty, resolveNoteBlockStyle, resolveNoteSelectionSnapshot, runNoteEditorCommand]);
+  }, [syncNoteContentFromEditor, insertTypingTargetAfterCurrentBlock, isNoteBlockEffectivelyEmpty, refreshNoteToolbarState, resolveNoteBlockStyle, resolveNoteSelectionSnapshot, runNoteEditorCommand]);
 
   const toggleNoteInlineStyle = useCallback((styleKey: NoteInlineStyleKey) => {
-    runNoteEditorCommand(styleKey);
-  }, [runNoteEditorCommand]);
+    const editor = noteEditorRef.current;
+    if (!editor) return;
+    editor.focus();
+    document.execCommand(styleKey, false);
+    // queryCommandState now reflects the new state immediately after execCommand
+    refreshNoteToolbarState();
+    syncNoteContentFromEditor();
+  }, [syncNoteContentFromEditor, refreshNoteToolbarState]);
 
   const toggleNoteListStyle = useCallback((styleKey: NoteListStyleKey) => {
     const snapshot = resolveNoteSelectionSnapshot();
@@ -681,12 +720,16 @@ const StudyHub: React.FC<StudyHubProps> = ({
       if (hasExistingText) {
         const nextTarget: NoteBlockStyleTag | NoteListStyleKey = isAlreadyActive ? 'p' : styleKey;
         insertTypingTargetAfterCurrentBlock(nextTarget);
+        window.requestAnimationFrame(() => {
+          syncNoteContentFromEditor();
+          refreshNoteToolbarState();
+        });
         return;
       }
     }
 
     runNoteEditorCommand(isOrdered ? 'insertOrderedList' : 'insertUnorderedList');
-  }, [insertTypingTargetAfterCurrentBlock, isNoteBlockEffectivelyEmpty, noteToolbarState.bulletList, noteToolbarState.orderedList, resolveNoteSelectionSnapshot, runNoteEditorCommand]);
+  }, [syncNoteContentFromEditor, insertTypingTargetAfterCurrentBlock, isNoteBlockEffectivelyEmpty, noteToolbarState.bulletList, noteToolbarState.orderedList, refreshNoteToolbarState, resolveNoteSelectionSnapshot, runNoteEditorCommand]);
 
   const handleNoteStyleButtonPointerDown = useCallback((key: NoteStylePresetKey, event: React.PointerEvent<HTMLButtonElement>) => {
     event.preventDefault();
@@ -703,10 +746,10 @@ const StudyHub: React.FC<StudyHubProps> = ({
     if (!text) return;
     document.execCommand('insertText', false, text);
     window.requestAnimationFrame(() => {
-      handleNoteEditorInput();
+      syncNoteContentFromEditor();
       refreshNoteToolbarState();
     });
-  }, [handleNoteEditorInput, refreshNoteToolbarState]);
+  }, [syncNoteContentFromEditor, refreshNoteToolbarState]);
 
   const noteStylePresets: Array<{
     key: NoteStylePresetKey;
@@ -737,7 +780,9 @@ const StudyHub: React.FC<StudyHubProps> = ({
       setIsNoteEditorFocused(false);
       return;
     }
-    const handleSelectionChange = () => refreshNoteToolbarState();
+    const handleSelectionChange = () => {
+      refreshNoteToolbarState();
+    };
     document.addEventListener('selectionchange', handleSelectionChange);
     window.requestAnimationFrame(refreshNoteToolbarState);
     return () => {
@@ -2432,7 +2477,7 @@ const StudyHub: React.FC<StudyHubProps> = ({
                   onClick={preset.onClick}
                   className={`w-full h-9 rounded-lg text-xs font-semibold flex items-center justify-center whitespace-nowrap transition-all ${
                     isPressed ? `${pressedClass} scale-[0.96]` : `${btnClass} active:scale-[0.98]`
-                  } text-slate-500 ${preset.active ? '' : 'hover:text-rose-400'}`}
+                  } ${preset.active ? '' : 'text-slate-500 hover:text-slate-400'}`}
                   style={preset.active ? { color: 'rgb(var(--theme-500) / 1)' } : undefined}
                 >
                   <Icon size={16} strokeWidth={2.15} />

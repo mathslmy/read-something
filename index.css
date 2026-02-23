@@ -761,25 +761,28 @@
         background: transparent;
       }
 
+      .studyhub-note-editor h1,
+      .studyhub-note-editor h2,
+      .studyhub-note-editor h3 {
+        font-weight: normal !important;
+      }
+
       .studyhub-note-editor h1 {
         margin: 0.3rem 0;
         font-size: 1.45rem;
         line-height: 1.5;
-        font-weight: 700;
       }
 
       .studyhub-note-editor h2 {
         margin: 0.25rem 0;
         font-size: 1.25rem;
         line-height: 1.5;
-        font-weight: 650;
       }
 
       .studyhub-note-editor h3 {
         margin: 0.2rem 0;
         font-size: 1.1rem;
         line-height: 1.5;
-        font-weight: 620;
       }
 
       .studyhub-note-editor p {

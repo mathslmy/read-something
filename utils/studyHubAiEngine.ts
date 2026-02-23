@@ -149,6 +149,20 @@ export const parseStudyHubAiComment = (raw: string): string => {
   return trimmed.replace(/^(?:\[评论\]|【评论】)\s*/gm, '').trim();
 };
 
+// ─── 笔记 Markdown → 纯文本（给 AI 看的版本，去掉格式符号）───
+
+const stripNoteMarkdownForPrompt = (md: string): string =>
+  (md || '')
+    .replace(/^#{1,6}\s+/gm, '')       // 去掉标题标记
+    .replace(/^\d+\.\s+/gm, '')         // 去掉有序列表标记
+    .replace(/^[-*+]\s+/gm, '')         // 去掉无序列表标记
+    .replace(/\*\*(.+?)\*\*/g, '$1')    // 去掉粗体标记
+    .replace(/\*(.+?)\*/g, '$1')        // 去掉斜体标记
+    .replace(/__(.+?)__/g, '$1')        // 去掉粗体标记（下划线版）
+    .replace(/_(.+?)_/g, '$1')          // 去掉斜体标记（下划线版）
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
 // ─── Prompt 构建：笔记批注 ───
 
 interface BuildNoteCommentPromptParams {
@@ -193,7 +207,7 @@ ${buildBookContextSection(bookContexts, ragContextByBookId)}
 </book_context>
 <note_content>
 【用户写的读书笔记】
-${sanitizeTextForAiPrompt(noteContent)}
+${stripNoteMarkdownForPrompt(sanitizeTextForAiPrompt(noteContent))}
 </note_content>
 ${historySection}
 <scene>
@@ -264,7 +278,7 @@ ${buildBookContextSection(bookContexts, ragContextByBookId)}
 </book_context>
 <note_content>
 【原始笔记内容】
-${sanitizeTextForAiPrompt(noteContent)}
+${stripNoteMarkdownForPrompt(sanitizeTextForAiPrompt(noteContent))}
 </note_content>
 
 <chat_history>
