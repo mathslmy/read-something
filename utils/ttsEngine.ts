@@ -19,7 +19,7 @@ export const TTS_PROVIDER_DEFS: {
   defaultModel: string;
 }[] = [
   { key: 'OPENAI_TTS', label: 'OpenAI TTS', defaultEndpoint: 'https://api.openai.com/v1', defaultModel: 'tts-1' },
-  { key: 'MINIMAX_T2A', label: 'MiniMax T2A', defaultEndpoint: 'https://api.minimax.chat/v1', defaultModel: 'speech-2.6-hd' },
+  { key: 'MINIMAX_T2A', label: 'MiniMax T2A', defaultEndpoint: 'https://minimax-tts-proxy.sh-vivian88.workers.dev/v1', defaultModel: 'speech-2.6-hd' },
   { key: 'ELEVENLABS', label: 'ElevenLabs', defaultEndpoint: 'https://api.elevenlabs.io', defaultModel: 'eleven_multilingual_v2' },
   { key: 'CUSTOM_TTS', label: '自定义 TTS', defaultEndpoint: '', defaultModel: '' },
 ];
@@ -28,6 +28,10 @@ export const MINIMAX_REGION_ENDPOINTS: Record<MiniMaxRegion, string> = {
   cn: 'https://api.minimax.chat/v1',
   intl: 'https://api.minimax.io/v1',
 };
+
+export const MINIMAX_PROXY_ENDPOINT = 'https://minimax-tts-proxy.sh-vivian88.workers.dev/v1';
+
+const LOCALHOST_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 
 export const OPENAI_TTS_VOICES = [
   { value: 'alloy', label: 'Alloy' },
@@ -83,6 +87,35 @@ function throwIfAborted(signal?: AbortSignal) {
   if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 }
 
+const resolveHostname = (rawUrl: string): string => {
+  try {
+    return new URL(rawUrl).hostname.toLowerCase();
+  } catch {
+    return '';
+  }
+};
+
+const isLocalBrowserOrigin = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  return LOCALHOST_HOSTS.has(window.location.hostname.toLowerCase());
+};
+
+const isMiniMaxOfficialHost = (host: string): boolean =>
+  host === 'api.minimax.chat' ||
+  host === 'api.minimax.io' ||
+  host === 'api.minimaxi.com' ||
+  host.endsWith('.minimax.chat') ||
+  host.endsWith('.minimax.io') ||
+  host.endsWith('.minimaxi.com');
+
+const isMiniMaxOfficialEndpoint = (endpoint: string): boolean =>
+  isMiniMaxOfficialHost(resolveHostname((endpoint || '').trim()));
+
+const buildMiniMaxCorsHelpMessage = (base: string): string => {
+  const origin = typeof window !== 'undefined' ? window.location.origin : '当前站点';
+  return `MiniMax 官方接口当前仅对 localhost 开放浏览器 CORS。当前站点 ${origin} 无法直接访问 ${base}。请在 TTS 设置里把 API 地址改为你自己的反向代理地址（同源或已允许 CORS）。`;
+};
+
 async function callOpenAiTts(text: string, config: TtsConfig, signal?: AbortSignal): Promise<Blob> {
   const endpoint = (config.endpoint || '').trim().replace(/\/+$/, '');
   const response = await fetch(`${endpoint}/audio/speech`, {
@@ -107,39 +140,74 @@ async function callMiniMaxTts(text: string, config: TtsConfig, signal?: AbortSig
   const groupId = (config.groupId || '').trim();
   const model = config.model.trim() || 'speech-2.6-hd';
   const region = config.minimaxRegion || 'cn';
-  const base = (config.endpoint || MINIMAX_REGION_ENDPOINTS[region]).trim().replace(/\/+$/, '');
+  const base = (config.endpoint || MINIMAX_PROXY_ENDPOINT || MINIMAX_REGION_ENDPOINTS[region]).trim().replace(/\/+$/, '');
   const voiceId = (config.voiceId || '').trim();
+  const endpointHost = resolveHostname(base);
+  const isWorkerProxy = endpointHost.endsWith('.workers.dev') || base.includes('minimax-tts-proxy');
 
-  // All models use t2a_v2 endpoint; China region passes GroupId as query param
-  const url = groupId
-    ? `${base}/t2a_v2?GroupId=${encodeURIComponent(groupId)}`
-    : `${base}/t2a_v2`;
+  const buildMiniMaxUrl = (targetBase: string, includeRegion: boolean): string => {
+    const query = new URLSearchParams();
+    if (groupId) query.set('GroupId', groupId);
+    if (includeRegion) query.set('region', region);
+    const queryString = query.toString();
+    return queryString ? `${targetBase}/t2a_v2?${queryString}` : `${targetBase}/t2a_v2`;
+  };
 
-  // Both regions use the same request body format (official docs)
-  const response = await fetch(url, {
+  const requestBody = JSON.stringify({
+    model,
+    text,
+    voice_setting: {
+      voice_id: voiceId,
+      speed: config.speed,
+      vol: 1.0,
+      pitch: 0,
+    },
+    audio_setting: {
+      sample_rate: 32000,
+      bitrate: 128000,
+      format: 'mp3',
+    },
+    ...(config.language ? { language_boost: config.language } : {}),
+  });
+
+  const doFetch = (targetUrl: string) => fetch(targetUrl, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${config.apiKey.trim()}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      model,
-      text,
-      voice_setting: {
-        voice_id: voiceId,
-        speed: config.speed,
-        vol: 1.0,
-        pitch: 0,
-      },
-      audio_setting: {
-        sample_rate: 32000,
-        bitrate: 128000,
-        format: 'mp3',
-      },
-      ...(config.language ? { language_boost: config.language } : {}),
-    }),
+    body: requestBody,
     signal,
   });
+
+  const url = buildMiniMaxUrl(base, isWorkerProxy);
+
+  // Both regions use the same request body format (official docs)
+  let response: Response;
+  try {
+    response = await doFetch(url);
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error;
+
+    if (isWorkerProxy && isLocalBrowserOrigin()) {
+      const directBase = MINIMAX_REGION_ENDPOINTS[region].trim().replace(/\/+$/, '');
+      const directUrl = buildMiniMaxUrl(directBase, false);
+      try {
+        response = await doFetch(directUrl);
+      } catch (fallbackError) {
+        if (fallbackError instanceof DOMException && fallbackError.name === 'AbortError') throw fallbackError;
+        const fallbackMessage = fallbackError instanceof Error && fallbackError.message ? fallbackError.message : '网络请求失败';
+        throw new Error(`MiniMax TTS 网络请求失败（代理与直连均失败）: ${fallbackMessage}`);
+      }
+    } else {
+      const host = resolveHostname(base);
+      if (typeof window !== 'undefined' && isMiniMaxOfficialHost(host) && !isLocalBrowserOrigin()) {
+        throw new Error(buildMiniMaxCorsHelpMessage(base));
+      }
+      const message = error instanceof Error && error.message ? error.message : '网络请求失败';
+      throw new Error(`MiniMax TTS 网络请求失败: ${message}`);
+    }
+  }
   if (!response.ok) throw new Error(await parseResponseError(response, 'MiniMax TTS 请求失败'));
 
   const data = await response.json();

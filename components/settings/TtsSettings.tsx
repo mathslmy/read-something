@@ -28,7 +28,7 @@ import {
   TTS_PROVIDER_DEFS,
   OPENAI_TTS_VOICES,
   MINIMAX_TTS_VOICES,
-  MINIMAX_REGION_ENDPOINTS,
+  MINIMAX_PROXY_ENDPOINT,
   validateTtsConfig,
   callTtsApi,
 } from '../../utils/ttsEngine';
@@ -241,6 +241,16 @@ const TtsSettings: React.FC<TtsSettingsProps> = ({ config, setConfig, presets, s
   const normalizedEndpoint = (config.endpoint || '').trim().replace(/\/+$/, '');
   const modelCacheKey = buildTtsModelCacheKey(config.provider, normalizedEndpoint, config.apiKey);
 
+  useEffect(() => {
+    if (config.provider !== 'MINIMAX_T2A') return;
+    if (normalizedEndpoint === MINIMAX_PROXY_ENDPOINT) return;
+    setConfig(prev => {
+      const current = (prev.endpoint || '').trim().replace(/\/+$/, '');
+      if (prev.provider !== 'MINIMAX_T2A' || current === MINIMAX_PROXY_ENDPOINT) return prev;
+      return { ...prev, endpoint: MINIMAX_PROXY_ENDPOINT };
+    });
+  }, [config.provider, normalizedEndpoint, setConfig]);
+
   // Load cached models on provider/endpoint/key change
   useEffect(() => {
     if (!modelCacheKey) {
@@ -264,10 +274,13 @@ const TtsSettings: React.FC<TtsSettingsProps> = ({ config, setConfig, presets, s
     const key = val as TtsProvider;
     const def = TTS_PROVIDER_DEFS.find(p => p.key === key);
     if (!def) return;
+    const nextEndpoint = key === 'MINIMAX_T2A'
+      ? MINIMAX_PROXY_ENDPOINT
+      : def.defaultEndpoint;
     setConfig(prev => ({
       ...prev,
       provider: key,
-      endpoint: def.defaultEndpoint,
+      endpoint: nextEndpoint,
       model: def.defaultModel,
       voiceId: key === 'OPENAI_TTS' ? 'alloy' : prev.voiceId,
       groupId: key === 'MINIMAX_T2A' ? prev.groupId : undefined,
@@ -282,7 +295,6 @@ const TtsSettings: React.FC<TtsSettingsProps> = ({ config, setConfig, presets, s
     setConfig(prev => ({
       ...prev,
       minimaxRegion: region,
-      endpoint: MINIMAX_REGION_ENDPOINTS[region],
     }));
   };
 
@@ -363,7 +375,7 @@ const TtsSettings: React.FC<TtsSettingsProps> = ({ config, setConfig, presets, s
       setFetchStatus('ERROR');
       let msg = err.message;
       if (msg === 'Failed to fetch') {
-        msg = '网络请求失败 (CORS Error)。\n请检查您的网络或使用允许跨域的代理地址。';
+        msg = '网络请求失败 (CORS Error)。请检查网络，或使用允许跨域的代理地址。';
       }
       setErrorModal({ open: true, message: msg });
     } finally {
@@ -477,7 +489,7 @@ const TtsSettings: React.FC<TtsSettingsProps> = ({ config, setConfig, presets, s
           />
         </div>
 
-        {/* MiniMax: Region Selector + Endpoint display + Group ID */}
+        {/* MiniMax: Region Selector + Group ID */}
         {isMiniMax && (
           <>
             {/* Region selector */}
@@ -487,8 +499,8 @@ const TtsSettings: React.FC<TtsSettingsProps> = ({ config, setConfig, presets, s
               </label>
               <SingleSelectDropdown
                 options={[
-                  { value: 'cn', label: '国内版 (minimaxi.chat)' },
-                  { value: 'intl', label: '国际版 (minimax.io)' },
+                  { value: 'cn', label: '国内版 (CN)' },
+                  { value: 'intl', label: '国际版 (INTL)' },
                 ]}
                 value={config.minimaxRegion || 'cn'}
                 onChange={handleMiniMaxRegionChange}
@@ -499,25 +511,13 @@ const TtsSettings: React.FC<TtsSettingsProps> = ({ config, setConfig, presets, s
               />
             </div>
 
-            {/* Endpoint - editable, auto-filled by region change */}
-            <div>
-              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1 mb-2 block flex items-center gap-2">
-                <Globe size={14} /> API 地址
-              </label>
-              <input
-                type="text"
-                value={config.endpoint}
-                onChange={e => setConfig(prev => ({ ...prev, endpoint: e.target.value }))}
-                placeholder={MINIMAX_REGION_ENDPOINTS[config.minimaxRegion || 'cn']}
-                className={`w-full h-[42px] px-4 rounded-xl text-sm outline-none ${inputClass}`}
-              />
-            </div>
-
             {/* Group ID - required for China, optional for international */}
             <div>
               <label className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1 mb-2 block flex items-center gap-2">
                 <Hash size={14} /> Group ID
-                {config.minimaxRegion === 'intl' && <span className="text-[10px] font-normal normal-case tracking-normal text-slate-400/60">（国际版选填）</span>}
+                {config.minimaxRegion === 'intl' && (
+                  <span className="text-[10px] font-normal normal-case tracking-normal text-slate-400/60">（国际版选填）</span>
+                )}
               </label>
               <input
                 type="text"

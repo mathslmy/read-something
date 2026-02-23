@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
+  AlertCircle,
   AlignCenter,
   AlignJustify,
   AlignLeft,
@@ -982,8 +983,10 @@ const Reader: React.FC<ReaderProps> = ({
   const [ttsRefreshingParagraphs, setTtsRefreshingParagraphs] = useState<Set<number>>(new Set());
   const [ttsPersistentCachedParagraphs, setTtsPersistentCachedParagraphs] = useState<number[]>([]);
   const [ttsAutoStartNextChapter, setTtsAutoStartNextChapter] = useState(false);
+  const [ttsErrorToast, setTtsErrorToast] = useState<{ show: boolean; message: string }>({ show: false, message: '' });
   const ttsControllerRef = useRef<TtsPlaybackController | null>(null);
   const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
+  const ttsErrorToastTimerRef = useRef<number | null>(null);
 
   const readerRootRef = useRef<HTMLDivElement>(null);
   const readerViewportContainerRef = useRef<HTMLDivElement>(null);
@@ -2664,6 +2667,35 @@ const Reader: React.FC<ReaderProps> = ({
 
   // ─── TTS Handlers ───
 
+  const showTtsErrorToast = useCallback((message: string) => {
+    const safeMessage = (message || '').trim() || 'TTS 朗读发生错误，请检查配置后重试';
+    if (ttsErrorToastTimerRef.current) {
+      window.clearTimeout(ttsErrorToastTimerRef.current);
+      ttsErrorToastTimerRef.current = null;
+    }
+    setTtsErrorToast({ show: true, message: safeMessage });
+    ttsErrorToastTimerRef.current = window.setTimeout(() => {
+      setTtsErrorToast({ show: false, message: '' });
+      ttsErrorToastTimerRef.current = null;
+    }, 2600);
+  }, []);
+
+  useEffect(() => () => {
+    if (ttsErrorToastTimerRef.current) {
+      window.clearTimeout(ttsErrorToastTimerRef.current);
+      ttsErrorToastTimerRef.current = null;
+    }
+  }, []);
+
+  const stopTtsPlaybackWithError = useCallback((message: string) => {
+    showTtsErrorToast(message);
+    setTtsAutoStartNextChapter(false);
+    ttsControllerRef.current?.stop();
+    ttsControllerRef.current = null;
+    setTtsPlaybackState(null);
+    setTtsActiveParagraphIndex(null);
+  }, [showTtsErrorToast]);
+
   const ttsScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const ttsPendingScrollParagraphRef = useRef<number | null>(null);
 
@@ -2719,7 +2751,10 @@ const Reader: React.FC<ReaderProps> = ({
       setTtsActiveParagraphIndex(pIdx);
       scrollToParagraph(pIdx);
     },
-    onError: (err) => console.error('[TTS]', err),
+    onError: (err) => {
+      console.error('[TTS]', err);
+      stopTtsPlaybackWithError(err);
+    },
     onComplete: () => {
       // Try auto-advance to next chapter
       if (ttsAutoAdvanceRef.current) {
@@ -2729,7 +2764,7 @@ const Reader: React.FC<ReaderProps> = ({
         setTtsPlaybackState(null);
       }
     },
-  }), [scrollToParagraph]);
+  }), [scrollToParagraph, stopTtsPlaybackWithError]);
 
   const ensureTtsAudioElement = useCallback(() => {
     if (!ttsAudioRef.current) {
@@ -3591,6 +3626,26 @@ const Reader: React.FC<ReaderProps> = ({
       }`}
       style={{ paddingTop: `${Math.max(0, safeAreaTop)}px`, paddingBottom: `${Math.max(0, safeAreaBottom)}px` }}
     >
+      {ttsErrorToast.show && (
+        <div
+          className="fixed left-1/2 -translate-x-1/2 z-[110] pointer-events-none transition-all duration-300"
+          style={{ top: `${Math.max(0, safeAreaTop) + 24}px` }}
+        >
+          <div
+            className={`w-[min(94vw,760px)] px-8 py-4 rounded-[28px] flex items-center gap-4 border backdrop-blur-md ${
+              isDarkMode
+                ? 'bg-[#2d3748]/95 text-slate-200 border-slate-700/70 shadow-[8px_8px_16px_#232b39,-8px_-8px_16px_#374357]'
+                : 'bg-[#e0e5ec]/95 text-slate-600 border-white/20 shadow-[8px_8px_16px_rgba(0,0,0,0.1),-8px_-8px_16px_rgba(255,255,255,0.8)]'
+            }`}
+          >
+            <AlertCircle size={28} className="text-rose-400 flex-shrink-0" />
+            <span className="font-bold text-xs sm:text-sm leading-snug">
+              {ttsErrorToast.message}
+            </span>
+          </div>
+        </div>
+      )}
+
       <div className={`flex items-center gap-3 p-4 z-10 transition-colors ${isDarkMode ? 'bg-[#2d3748]' : 'bg-[#e0e5ec]'}`}>
         <button onClick={handleBackClick} className="w-10 h-10 neu-btn rounded-full text-slate-500 hover:text-slate-700 shrink-0">
           <ArrowLeft size={20} />

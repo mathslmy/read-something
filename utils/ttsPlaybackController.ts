@@ -370,6 +370,8 @@ export class TtsPlaybackController {
 
     if (chunk.status === 'error' || !chunk.audioBlob) {
       this.callbacks.onError(chunk.error || 'TTS 音频获取失败');
+      // Allow host app to stop playback in onError callback.
+      if (this.destroyed || !this.isActive) return;
       // try next chunk
       if (this.currentChunkIndex < this.chunks.length - 1) {
         this.currentChunkIndex++;
