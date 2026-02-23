@@ -96,6 +96,13 @@ interface ReaderMessagePanelProps {
   onTtsClearCache: () => void;
   ttsResumePosition?: ReaderBookState['ttsResumePosition'];
   onTtsResumeFromSaved: () => void;
+  ttsExportChapterOptions: Array<{ value: string; label: string }>;
+  onTtsExportAudiobook: (chapterIndices: number[], includeSubtitles: boolean) => Promise<{
+    exportedCount: number;
+    skippedCount: number;
+    zipFileName: string;
+    skippedReasons: string[];
+  }>;
 }
 
 interface ContextMenuState {
@@ -488,6 +495,8 @@ const ReaderMessagePanel: React.FC<ReaderMessagePanelProps> = ({
   onTtsClearCache,
   ttsResumePosition,
   onTtsResumeFromSaved,
+  ttsExportChapterOptions,
+  onTtsExportAudiobook,
 }) => {
   const [isAiPanelOpen, setIsAiPanelOpen] = useState(true);
   const [isAiFabOpening, setIsAiFabOpening] = useState(false);
@@ -3277,6 +3286,8 @@ const ReaderMessagePanel: React.FC<ReaderMessagePanelProps> = ({
         onTtsClearCache={onTtsClearCache}
         ttsResumePosition={ttsResumePosition}
         onTtsResumeFromSaved={onTtsResumeFromSaved}
+        ttsExportChapterOptions={ttsExportChapterOptions}
+        onTtsExportAudiobook={onTtsExportAudiobook}
       />
 
       {contextMenu && !isDeleteMode && (

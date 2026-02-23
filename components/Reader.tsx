@@ -39,6 +39,7 @@ import { Character, Persona, WorldBookEntry } from './settings/types';
 import { TtsPlaybackController, TtsPlaybackCallbacks, buildTtsChunks } from '../utils/ttsPlaybackController';
 import { validateTtsConfig } from '../utils/ttsEngine';
 import { clearBookTtsAudio, deleteTtsAudio, getChapterCachedChunkTexts } from '../utils/ttsAudioStorage';
+import { exportCachedTtsAudiobookZip } from '../utils/ttsAudiobookExport';
 import type { TtsPreset, TtsChunk } from '../types';
 import { getBookContent, saveBookReaderState } from '../utils/bookContentStorage';
 import { buildConversationKey, persistConversationBucket, readConversationBucket } from '../utils/readerChatRuntime';
@@ -987,6 +988,8 @@ const Reader: React.FC<ReaderProps> = ({
   const ttsControllerRef = useRef<TtsPlaybackController | null>(null);
   const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
   const ttsErrorToastTimerRef = useRef<number | null>(null);
+  const ttsAutoStartModeRef = useRef<'chapter_start' | 'viewport'>('chapter_start');
+  const ttsAutoStartTaskIdRef = useRef(0);
 
   const readerRootRef = useRef<HTMLDivElement>(null);
   const readerViewportContainerRef = useRef<HTMLDivElement>(null);
@@ -1248,17 +1251,32 @@ const Reader: React.FC<ReaderProps> = ({
   const switchToChapter = (index: number, target: ScrollTarget, direction?: ChapterSwitchDirection) => {
     const chapter = chapters[index];
     if (!chapter) return false;
+    const controllerState = ttsControllerRef.current?.getState();
+    const shouldResumeTtsInNextChapter =
+      !!controllerState?.isActive || !!ttsPlaybackState?.isActive || ttsAutoStartNextChapter;
 
     const applyChapter = () => {
       setSelectedChapterIndex(index);
       setBookText(chapter.content || '');
       closeFloatingPanel();
       scrollReaderTo(target);
-      // Stop TTS when switching chapters
-      ttsControllerRef.current?.stop();
-      ttsControllerRef.current = null;
-      setTtsPlaybackState(null);
-      setTtsActiveParagraphIndex(null);
+      if (shouldResumeTtsInNextChapter) {
+        // Keep TTS mode on across manual chapter switches and auto-start in next chapter.
+        ttsAutoStartModeRef.current = 'viewport';
+        ttsAutoStartTaskIdRef.current += 1;
+        ttsControllerRef.current?.destroy();
+        ttsControllerRef.current = null;
+        setTtsActiveParagraphIndex(null);
+        setTtsAutoStartNextChapter(true);
+      } else {
+        // TTS is not active: keep existing stop behavior.
+        ttsAutoStartTaskIdRef.current += 1;
+        setTtsAutoStartNextChapter(false);
+        ttsControllerRef.current?.stop();
+        ttsControllerRef.current = null;
+        setTtsPlaybackState(null);
+        setTtsActiveParagraphIndex(null);
+      }
     };
 
     if (!direction || selectedChapterIndex === null || index === selectedChapterIndex) {
@@ -2689,6 +2707,7 @@ const Reader: React.FC<ReaderProps> = ({
 
   const stopTtsPlaybackWithError = useCallback((message: string) => {
     showTtsErrorToast(message);
+    ttsAutoStartTaskIdRef.current += 1;
     setTtsAutoStartNextChapter(false);
     ttsControllerRef.current?.stop();
     ttsControllerRef.current = null;
@@ -2775,6 +2794,29 @@ const Reader: React.FC<ReaderProps> = ({
     return ttsAudioRef.current;
   }, []);
 
+  const resolveTtsStartParagraphFromViewport = useCallback((paragraphCount: number) => {
+    if (paragraphCount <= 0) return 0;
+
+    const scroller = readerScrollRef.current;
+    const article = readerArticleRef.current;
+    if (!scroller || !article) return 0;
+
+    const scrollerRect = scroller.getBoundingClientRect();
+    const viewportTop = scrollerRect.top + scrollerRect.height * 0.2;
+    const pEls = article.querySelectorAll<HTMLElement>('[data-tts-paragraph-index]');
+    for (const pEl of pEls) {
+      const rect = pEl.getBoundingClientRect();
+      if (rect.bottom < viewportTop) continue;
+      const idx = parseInt(pEl.getAttribute('data-tts-paragraph-index') || '0', 10);
+      if (!Number.isNaN(idx)) {
+        return clamp(idx, 0, paragraphCount - 1);
+      }
+      break;
+    }
+
+    return 0;
+  }, []);
+
   const handleTtsStart = useCallback(() => {
     if (!ttsConfig || validateTtsConfig(ttsConfig)) return;
 
@@ -2787,22 +2829,7 @@ const Reader: React.FC<ReaderProps> = ({
     }));
     if (paraInfos.length === 0) return;
 
-    // Find nearest paragraph from current scroll position
-    let startParagraph = 0;
-    const scroller = readerScrollRef.current;
-    const article = readerArticleRef.current;
-    if (scroller && article) {
-      const scrollerRect = scroller.getBoundingClientRect();
-      const viewportTop = scrollerRect.top + scrollerRect.height * 0.2;
-      const pEls = article.querySelectorAll<HTMLElement>('[data-tts-paragraph-index]');
-      for (const pEl of pEls) {
-        const rect = pEl.getBoundingClientRect();
-        if (rect.bottom >= viewportTop) {
-          startParagraph = parseInt(pEl.getAttribute('data-tts-paragraph-index') || '0', 10);
-          break;
-        }
-      }
-    }
+    const startParagraph = resolveTtsStartParagraphFromViewport(paraInfos.length);
 
     const chIdx = selectedChapterIndex;
     let chunks = buildTtsChunks(paraInfos, chIdx, startParagraph, ttsConfig.chunkSize);
@@ -2816,9 +2843,11 @@ const Reader: React.FC<ReaderProps> = ({
     ttsControllerRef.current = ctrl;
     ctrl.start(chunks);
     setTtsResumePosition(undefined);
-  }, [ttsConfig, paragraphMeta, selectedChapterIndex, scrollToParagraph, activeBook, prependTitleChunk, makeTtsCallbacks, ensureTtsAudioElement]);
+  }, [ttsConfig, paragraphMeta, selectedChapterIndex, scrollToParagraph, activeBook, prependTitleChunk, makeTtsCallbacks, ensureTtsAudioElement, resolveTtsStartParagraphFromViewport]);
 
   const handleTtsStop = useCallback(() => {
+    ttsAutoStartTaskIdRef.current += 1;
+    setTtsAutoStartNextChapter(false);
     ttsControllerRef.current?.stop();
     ttsControllerRef.current = null;
     setTtsPlaybackState(null);
@@ -2860,6 +2889,50 @@ const Reader: React.FC<ReaderProps> = ({
     }
     setTtsPersistentCachedParagraphs([]);
   }, [activeBook]);
+
+  const ttsExportChapterOptions = useMemo(
+    () => chapters.map((chapter, index) => ({
+      value: String(index),
+      label: chapter.title?.trim() || '未命名章节',
+    })),
+    [chapters],
+  );
+
+  const handleTtsExportAudiobook = useCallback(async (chapterIndices: number[], includeSubtitles: boolean) => {
+    const bookId = activeBook?.id;
+    if (!bookId) {
+      throw new Error('未选择书籍，无法导出');
+    }
+
+    const result = await exportCachedTtsAudiobookZip({
+      bookId,
+      bookTitle: (activeBook?.title || '').trim() || 'book',
+      chapters,
+      chapterIndices,
+      includeSubtitles,
+    });
+
+    const blobUrl = URL.createObjectURL(result.zipBlob);
+    const anchor = document.createElement('a');
+    anchor.href = blobUrl;
+    anchor.download = result.zipFileName;
+    anchor.style.display = 'none';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1200);
+
+    const skippedReasons = result.chapterResults
+      .filter((item) => !item.exported && item.reason)
+      .map((item) => `${item.chapterTitle}：${item.reason as string}`);
+
+    return {
+      exportedCount: result.exportedCount,
+      skippedCount: result.skippedCount,
+      zipFileName: result.zipFileName,
+      skippedReasons,
+    };
+  }, [activeBook?.id, activeBook?.title, chapters]);
 
   const handleTtsJumpToParagraph = useCallback((paragraphIndex: number) => {
     ttsControllerRef.current?.jumpToParagraph(paragraphIndex);
@@ -2988,6 +3061,8 @@ const Reader: React.FC<ReaderProps> = ({
       setSelectedChapterIndex(nextIdx);
       setBookText(nextChapter.content || '');
       scrollReaderTo('top');
+      ttsAutoStartModeRef.current = 'chapter_start';
+      ttsAutoStartTaskIdRef.current += 1;
       setTtsAutoStartNextChapter(true);
     };
   }, [selectedChapterIndex, chapters]);
@@ -2995,27 +3070,56 @@ const Reader: React.FC<ReaderProps> = ({
   // Auto-start TTS after chapter switch triggered by auto-advance
   useEffect(() => {
     if (!ttsAutoStartNextChapter || paragraphMeta.length === 0 || !ttsConfig) return;
+    const taskId = ++ttsAutoStartTaskIdRef.current;
     setTtsAutoStartNextChapter(false);
 
-    const paraInfos = paragraphMeta.map((p, i) => ({
-      text: p.text, start: p.start, end: p.end, index: i,
-    }));
-    const chIdx = selectedChapterIndex;
-    let chunks = buildTtsChunks(paraInfos, chIdx, 0, ttsConfig.chunkSize);
-    chunks = prependTitleChunk(chunks, 0, chIdx);
-    if (chunks.length === 0) {
-      setTtsActiveParagraphIndex(null);
-      setTtsPlaybackState(null);
-      return;
-    }
+    const autoStartMode = ttsAutoStartModeRef.current;
+    ttsAutoStartModeRef.current = 'chapter_start';
 
-    const ttsAudio = ensureTtsAudioElement();
-    const bookId = activeBook?.id || '';
-    const ctrl = new TtsPlaybackController(ttsAudio, ttsConfig, makeTtsCallbacks(), bookId);
-    ttsControllerRef.current = ctrl;
-    ctrl.start(chunks);
+    const waitFrames = (count: number) => new Promise<void>((resolve) => {
+      const next = (remaining: number) => {
+        if (remaining <= 0) {
+          resolve();
+          return;
+        }
+        window.requestAnimationFrame(() => next(remaining - 1));
+      };
+      next(count);
+    });
+
+    (async () => {
+      if (autoStartMode === 'viewport') {
+        // Wait for chapter scroll positioning to settle before resolving visible paragraph.
+        await waitFrames(3);
+      }
+      if (taskId !== ttsAutoStartTaskIdRef.current) return;
+
+      const paraInfos = paragraphMeta.map((p, i) => ({
+        text: p.text, start: p.start, end: p.end, index: i,
+      }));
+      const chIdx = selectedChapterIndex;
+      const startParagraph = autoStartMode === 'viewport'
+        ? resolveTtsStartParagraphFromViewport(paraInfos.length)
+        : 0;
+
+      let chunks = buildTtsChunks(paraInfos, chIdx, startParagraph, ttsConfig.chunkSize);
+      chunks = prependTitleChunk(chunks, startParagraph, chIdx);
+      if (chunks.length === 0) {
+        setTtsActiveParagraphIndex(null);
+        setTtsPlaybackState(null);
+        return;
+      }
+      if (taskId !== ttsAutoStartTaskIdRef.current) return;
+
+      const ttsAudio = ensureTtsAudioElement();
+      const bookId = activeBook?.id || '';
+      const ctrl = new TtsPlaybackController(ttsAudio, ttsConfig, makeTtsCallbacks(), bookId);
+      if (taskId !== ttsAutoStartTaskIdRef.current) return;
+      ttsControllerRef.current = ctrl;
+      ctrl.start(chunks);
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ttsAutoStartNextChapter, paragraphMeta, ensureTtsAudioElement]);
+  }, [ttsAutoStartNextChapter, paragraphMeta, ensureTtsAudioElement, resolveTtsStartParagraphFromViewport]);
 
   // Load persistent cached paragraph indices from IndexedDB on chapter change
   const ttsCacheVersionRef = useRef(0);
@@ -4203,7 +4307,9 @@ const Reader: React.FC<ReaderProps> = ({
               const isTitleCurrentTts = ttsPlaybackState?.isActive && ttsActiveParagraphIndex === -1;
               const isTitleActiveCached = ttsPlaybackState?.isActive && ttsPlaybackState.cachedParagraphIndices?.includes(-1);
               const isTitlePersistentCached = ttsPersistentCachedParagraphs.includes(-1);
-              const showTitleTtsIcons = isTitleCurrentTts || isTitleActiveCached || isTitlePersistentCached;
+              const showTitleTtsIcons = !!ttsPlaybackState?.isActive && (
+                isTitleCurrentTts || isTitleActiveCached || isTitlePersistentCached
+              );
               const isTitleRefreshing = ttsRefreshingParagraphs.has(-1);
               return (
                 <>
@@ -4294,7 +4400,9 @@ const Reader: React.FC<ReaderProps> = ({
               const isCurrentTtsParagraph = ttsPlaybackState?.isActive && ttsActiveParagraphIndex === item.paragraphIndex;
               const isActiveCachedParagraph = ttsPlaybackState?.isActive && ttsPlaybackState.cachedParagraphIndices?.includes(item.paragraphIndex);
               const isPersistentCachedParagraph = ttsPersistentCachedParagraphs.includes(item.paragraphIndex);
-              const showTtsIcons = isCurrentTtsParagraph || isActiveCachedParagraph || isPersistentCachedParagraph;
+              const showTtsIcons = !!ttsPlaybackState?.isActive && (
+                isCurrentTtsParagraph || isActiveCachedParagraph || isPersistentCachedParagraph
+              );
               const isRefreshing = ttsRefreshingParagraphs.has(item.paragraphIndex);
               return (
                 <React.Fragment key={item.key}>
@@ -4455,6 +4563,8 @@ const Reader: React.FC<ReaderProps> = ({
         onTtsClearCache={handleTtsClearCache}
         ttsResumePosition={ttsResumePosition}
         onTtsResumeFromSaved={handleTtsResumeFromSaved}
+        ttsExportChapterOptions={ttsExportChapterOptions}
+        onTtsExportAudiobook={handleTtsExportAudiobook}
       />
     </div>
   );

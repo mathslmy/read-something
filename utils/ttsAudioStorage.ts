@@ -19,6 +19,12 @@ export interface StoredTtsAudioEntry {
   chapterIndex: number;
 }
 
+export interface ChapterCachedAudioEntry {
+  chunkText: string;
+  audioBlob: Blob;
+  createdAt: number;
+}
+
 // ─── Text Hashing ───
 
 function computeTextHash(text: string): string {
@@ -193,6 +199,37 @@ export async function getChapterCachedChunkTexts(
 
     tx.oncomplete = () => resolve(texts);
     tx.onerror = () => reject(tx.error || new Error('查询章节 TTS 缓存失败'));
+  });
+}
+
+export async function getChapterCachedAudioEntries(
+  bookId: string,
+  chapterIndex: number,
+): Promise<ChapterCachedAudioEntry[]> {
+  const db = await openDb();
+
+  return new Promise((resolve, reject) => {
+    const entries: ChapterCachedAudioEntry[] = [];
+    const tx = db.transaction(TTS_AUDIO_STORE, 'readonly');
+    const store = tx.objectStore(TTS_AUDIO_STORE);
+    const request = store.openCursor();
+
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (!cursor) return;
+      const entry = cursor.value as StoredTtsAudioEntry | undefined;
+      if (entry && entry.bookId === bookId && entry.chapterIndex === chapterIndex && entry.audioBlob instanceof Blob) {
+        entries.push({
+          chunkText: entry.chunkText,
+          audioBlob: entry.audioBlob,
+          createdAt: Number.isFinite(entry.createdAt) ? entry.createdAt : 0,
+        });
+      }
+      cursor.continue();
+    };
+
+    tx.oncomplete = () => resolve(entries);
+    tx.onerror = () => reject(tx.error || new Error('Failed to query chapter TTS audio cache'));
   });
 }
 

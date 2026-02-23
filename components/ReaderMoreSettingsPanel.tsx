@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Check, ChevronDown, Trash2, AlertTriangle, Image as ImageIcon, Link as LinkIcon, Loader2, X, RefreshCw, Save, Edit2, Paintbrush, Wrench, MessageSquareText, Eraser, Volume2, Play, Square } from 'lucide-react';
+import { ArrowLeft, Check, ChevronDown, Trash2, AlertTriangle, Image as ImageIcon, Link as LinkIcon, Loader2, X, RefreshCw, Save, Edit2, Paintbrush, Wrench, MessageSquareText, Eraser, Volume2, Play, Square, Download } from 'lucide-react';
 import { ApiPreset, AppSettings, ReaderBookState, ReaderSummaryCard, TtsConfig, TtsPlaybackState } from '../types';
 import type { TtsPreset } from '../types';
 import { validateTtsConfig } from '../utils/ttsEngine';
@@ -22,6 +22,18 @@ type TabKey = 'appearance' | 'feature' | 'session' | 'tts';
 type ModalType = 'none' | 'book' | 'chat' | 'bgUrl';
 const PANEL_VIEW_TRANSITION_MS = 420;
 const MODAL_FADE_TRANSITION_MS = 220;
+
+interface TtsExportChapterOption {
+  value: string;
+  label: string;
+}
+
+interface TtsAudiobookExportResult {
+  exportedCount: number;
+  skippedCount: number;
+  zipFileName: string;
+  skippedReasons: string[];
+}
 
 interface Props {
   isDarkMode: boolean;
@@ -74,6 +86,8 @@ interface Props {
   onTtsClearCache: () => void;
   ttsResumePosition?: ReaderBookState['ttsResumePosition'];
   onTtsResumeFromSaved: () => void;
+  ttsExportChapterOptions: TtsExportChapterOption[];
+  onTtsExportAudiobook: (chapterIndices: number[], includeSubtitles: boolean) => Promise<TtsAudiobookExportResult>;
 }
 
 const TAB_ITEMS: Array<{ key: TabKey; label: string; icon: React.ComponentType<{ size?: number }> }> = [
@@ -144,14 +158,12 @@ const Toggle = ({
   checked,
   onClick,
   pressedClass,
-  activeClass,
 }: {
   checked: boolean;
   onClick: () => void;
   pressedClass: string;
-  activeClass: string;
 }) => (
-  <button type="button" onClick={onClick} className={`w-14 h-8 rounded-full p-1 flex items-center transition-all ${pressedClass} ${activeClass}`}>
+  <button type="button" onClick={onClick} className={`w-14 h-8 rounded-full p-1 flex items-center transition-all ${pressedClass}`}>
     <div className={`w-6 h-6 rounded-full shadow-sm flex items-center justify-center transition-all transform duration-300 ${checked ? 'translate-x-6 bg-rose-400' : 'translate-x-0 bg-slate-400'}`} />
   </button>
 );
@@ -237,6 +249,119 @@ const SingleSelectDropdown = ({
                     {isSelected && <Check size={10} className="text-white" />}
                  </div>
                  <span className="truncate">{opt.label}</span>
+              </div>
+            );
+          }) : (
+            <div className="p-2 text-xs text-slate-400 text-center">无可用选项</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const MultiSelectDropdown = ({
+  options,
+  values,
+  onChange,
+  placeholder = '选择...',
+  inputClass,
+  cardClass,
+  isDarkMode,
+  disabled = false,
+}: {
+  options: OptionItem[];
+  values: string[];
+  onChange: (vals: string[]) => void;
+  placeholder?: string;
+  inputClass: string;
+  cardClass: string;
+  isDarkMode: boolean;
+  disabled?: boolean;
+}) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const valueSet = useMemo(() => new Set(values), [values]);
+  const selectedOptions = useMemo(() => options.filter((opt) => valueSet.has(opt.value)), [options, valueSet]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const summaryText = useMemo(() => {
+    if (selectedOptions.length === 0) return placeholder;
+    if (selectedOptions.length <= 2) return selectedOptions.map((item) => item.label).join('、');
+    return `已选择 ${selectedOptions.length} 个章节`;
+  }, [selectedOptions, placeholder]);
+
+  const toggleValue = (value: string) => {
+    if (valueSet.has(value)) {
+      onChange(values.filter((item) => item !== value));
+      return;
+    }
+    onChange([...values, value]);
+  };
+
+  const handleSelectAll = () => onChange(options.map((opt) => opt.value));
+  const handleClearAll = () => onChange([]);
+
+  return (
+    <div className={`relative ${disabled ? 'opacity-50 pointer-events-none' : ''}`} ref={containerRef}>
+      <div
+        onClick={() => setIsOpen((prev) => !prev)}
+        className={`w-full p-2 min-h-[42px] rounded-xl flex items-center justify-between cursor-pointer transition-all active:scale-[0.99] ${inputClass}`}
+      >
+        <div className="flex items-center gap-2 px-2 min-w-0">
+          <span className={`text-sm font-medium truncate ${selectedOptions.length === 0 ? 'opacity-50' : ''} ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>
+            {summaryText}
+          </span>
+        </div>
+        <div className="opacity-50 pr-2">
+          <ChevronDown size={16} className={`transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
+        </div>
+      </div>
+
+      {isOpen && (
+        <div className={`absolute top-full left-0 right-0 mt-2 p-2 rounded-xl z-[50] max-h-64 overflow-y-auto ${cardClass} border border-slate-400/10 animate-fade-in shadow-2xl`}>
+          <div className="flex items-center justify-between px-2 pb-2">
+            <button
+              type="button"
+              onClick={handleSelectAll}
+              className={`text-[11px] ${isDarkMode ? 'text-slate-300 hover:text-rose-300' : 'text-slate-500 hover:text-rose-500'}`}
+            >
+              全选
+            </button>
+            <button
+              type="button"
+              onClick={handleClearAll}
+              className={`text-[11px] ${isDarkMode ? 'text-slate-300 hover:text-rose-300' : 'text-slate-500 hover:text-rose-500'}`}
+            >
+              清空
+            </button>
+          </div>
+
+          {options.length > 0 ? options.map((opt) => {
+            const checked = valueSet.has(opt.value);
+            return (
+              <div
+                key={opt.value}
+                onClick={() => toggleValue(opt.value)}
+                className={`flex items-center gap-2 p-2 rounded-lg text-sm cursor-pointer transition-colors ${
+                  checked
+                    ? 'text-rose-400 font-bold bg-rose-400/10'
+                    : isDarkMode ? 'text-slate-300 hover:bg-slate-700' : 'text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                <div className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 ${checked ? 'bg-rose-400 border-rose-400' : 'border-slate-400'}`}>
+                  {checked && <Check size={10} className="text-white" />}
+                </div>
+                <span className="truncate">{opt.label}</span>
               </div>
             );
           }) : (
@@ -339,6 +464,8 @@ const ReaderMoreSettingsPanel: React.FC<Props> = (props) => {
     onTtsClearCache,
     ttsResumePosition,
     onTtsResumeFromSaved,
+    ttsExportChapterOptions,
+    onTtsExportAudiobook,
   } = props;
 
   const [tab, setTab] = useState<TabKey>('appearance');
@@ -356,6 +483,10 @@ const ReaderMoreSettingsPanel: React.FC<Props> = (props) => {
   const [selectedChatSummaryCardIds, setSelectedChatSummaryCardIds] = useState<string[]>([]);
   const [pendingArchiveDelete, setPendingArchiveDelete] = useState<ReaderArchiveOption | null>(null);
   const [archiveDeleteDialogClosing, setArchiveDeleteDialogClosing] = useState(false);
+  const [selectedTtsExportChapterValues, setSelectedTtsExportChapterValues] = useState<string[]>([]);
+  const [ttsExportIncludeSubtitles, setTtsExportIncludeSubtitles] = useState(false);
+  const [isExportingTtsAudiobook, setIsExportingTtsAudiobook] = useState(false);
+  const [ttsExportStatus, setTtsExportStatus] = useState<{ text: string; skippedReasons: string[] } | null>(null);
   const [cssApplySuccess, setCssApplySuccess] = useState(false);
   const [cssClearSuccess, setCssClearSuccess] = useState(false);
   const cssApplyTimerRef = useRef<number | null>(null);
@@ -367,6 +498,14 @@ const ReaderMoreSettingsPanel: React.FC<Props> = (props) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const contentScrollRef = useRef<HTMLDivElement>(null);
   const contentTouchStartYRef = useRef(0);
+
+  useEffect(() => {
+    setSelectedTtsExportChapterValues((prev) => {
+      const validSet = new Set(ttsExportChapterOptions.map((item) => item.value));
+      const next = prev.filter((item) => validSet.has(item));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [ttsExportChapterOptions]);
 
   useEffect(() => {
     if (isOpen) {
@@ -534,6 +673,37 @@ const ReaderMoreSettingsPanel: React.FC<Props> = (props) => {
       className={`w-14 h-8 rounded-lg px-2 text-xs text-right outline-none [appearance:textfield] ${inputClass}`}
     />
   );
+  const handleExportTtsAudiobook = async () => {
+    const chapterIndices = Array.from(
+      new Set<number>(
+        selectedTtsExportChapterValues
+          .map((value) => Number(value))
+          .filter((value) => Number.isFinite(value))
+          .map((value) => Math.floor(value)),
+      ),
+    ).sort((a: number, b: number) => a - b);
+
+    if (chapterIndices.length === 0) {
+      setTtsExportStatus({ text: '请先选择至少一个章节', skippedReasons: [] });
+      return;
+    }
+
+    setIsExportingTtsAudiobook(true);
+    setTtsExportStatus(null);
+    try {
+      const result = await onTtsExportAudiobook(chapterIndices, ttsExportIncludeSubtitles);
+      const skippedNote = result.skippedCount > 0 ? `，跳过 ${result.skippedCount} 章` : '';
+      setTtsExportStatus({
+        text: `导出完成：${result.exportedCount} 章${skippedNote}（${result.zipFileName}）`,
+        skippedReasons: result.skippedReasons || [],
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '导出失败，请稍后重试';
+      setTtsExportStatus({ text: message, skippedReasons: [] });
+    } finally {
+      setIsExportingTtsAudiobook(false);
+    }
+  };
   const openModal = (nextModal: Exclude<ModalType, 'none'>) => {
     if (modalCloseTimerRef.current) window.clearTimeout(modalCloseTimerRef.current);
     setModalClosing(false);
@@ -923,7 +1093,7 @@ const ReaderMoreSettingsPanel: React.FC<Props> = (props) => {
                     <div className="py-5">
                       <div className="flex items-center justify-between">
                         <span className={`text-sm font-bold ${headingClass}`}>时间显示</span>
-                        <Toggle checked={appearanceSettings.showMessageTime} onClick={() => onUpdateAppearanceSettings({ showMessageTime: !appearanceSettings.showMessageTime })} pressedClass={pressedClass} activeClass={activeBtnClass} />
+                        <Toggle checked={appearanceSettings.showMessageTime} onClick={() => onUpdateAppearanceSettings({ showMessageTime: !appearanceSettings.showMessageTime })} pressedClass={pressedClass} />
                       </div>
                     </div>
 
@@ -1137,7 +1307,7 @@ const ReaderMoreSettingsPanel: React.FC<Props> = (props) => {
                     <div className="py-5">
                       <div className="flex items-center justify-between mb-2">
                         <span className={`text-sm font-bold ${headingClass}`}>聊天自动总结</span>
-                        <Toggle checked={featureSettings.autoChatSummaryEnabled} onClick={() => onUpdateFeatureSettings({ autoChatSummaryEnabled: !featureSettings.autoChatSummaryEnabled })} pressedClass={pressedClass} activeClass={activeBtnClass} />
+                        <Toggle checked={featureSettings.autoChatSummaryEnabled} onClick={() => onUpdateFeatureSettings({ autoChatSummaryEnabled: !featureSettings.autoChatSummaryEnabled })} pressedClass={pressedClass} />
                       </div>
                       <div className={`grid transition-[grid-template-rows] duration-300 ${featureSettings.autoChatSummaryEnabled ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
                         <div className="overflow-hidden">
@@ -1155,7 +1325,7 @@ const ReaderMoreSettingsPanel: React.FC<Props> = (props) => {
                     <div className="py-5">
                       <div className="flex items-center justify-between mb-2">
                         <span className={`text-sm font-bold ${headingClass}`}>书籍自动总结</span>
-                        <Toggle checked={featureSettings.autoBookSummaryEnabled} onClick={() => onUpdateFeatureSettings({ autoBookSummaryEnabled: !featureSettings.autoBookSummaryEnabled })} pressedClass={pressedClass} activeClass={activeBtnClass} />
+                        <Toggle checked={featureSettings.autoBookSummaryEnabled} onClick={() => onUpdateFeatureSettings({ autoBookSummaryEnabled: !featureSettings.autoBookSummaryEnabled })} pressedClass={pressedClass} />
                       </div>
                       <div className={`grid transition-[grid-template-rows] duration-300 ${featureSettings.autoBookSummaryEnabled ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
                         <div className="overflow-hidden">
@@ -1176,7 +1346,7 @@ const ReaderMoreSettingsPanel: React.FC<Props> = (props) => {
                           <div className={`text-sm font-bold ${headingClass}`}>总结专用副 API</div>
                           <div className="text-xs text-slate-500 mt-1">只用于聊天/书籍总结</div>
                         </div>
-                        <Toggle checked={featureSettings.summaryApiEnabled} onClick={() => onUpdateFeatureSettings({ summaryApiEnabled: !featureSettings.summaryApiEnabled })} pressedClass={pressedClass} activeClass={activeBtnClass} />
+                        <Toggle checked={featureSettings.summaryApiEnabled} onClick={() => onUpdateFeatureSettings({ summaryApiEnabled: !featureSettings.summaryApiEnabled })} pressedClass={pressedClass} />
                       </div>
                       <div className={`grid transition-[grid-template-rows] duration-300 ${featureSettings.summaryApiEnabled ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
                         <div className={featureSettings.summaryApiEnabled ? 'overflow-visible' : 'overflow-hidden'}>
@@ -1523,6 +1693,62 @@ const ReaderMoreSettingsPanel: React.FC<Props> = (props) => {
                             <Trash2 size={14} />
                             清空全部朗读音频
                           </button>
+                        </div>
+
+                        <div className="w-full h-[1px] bg-slate-300/20 my-0" />
+
+                        {/* 导出有声书 */}
+                        <div className="py-5 space-y-3">
+                          <div className={`text-sm font-bold ${headingClass}`}>导出有声书</div>
+                          <MultiSelectDropdown
+                            options={ttsExportChapterOptions}
+                            values={selectedTtsExportChapterValues}
+                            onChange={setSelectedTtsExportChapterValues}
+                            placeholder="选择要导出的章节..."
+                            inputClass={inputClass}
+                            cardClass={cardClass}
+                            isDarkMode={isDarkMode}
+                            disabled={isExportingTtsAudiobook}
+                          />
+
+                          <div className={`flex items-center justify-between ${isExportingTtsAudiobook ? 'opacity-55' : ''}`}>
+                            <span className={`text-sm font-bold ${headingClass}`}>同时生成字幕文件（.srt）</span>
+                            <Toggle
+                              checked={ttsExportIncludeSubtitles}
+                              onClick={() => {
+                                if (isExportingTtsAudiobook) return;
+                                setTtsExportIncludeSubtitles((prev) => !prev);
+                              }}
+                              pressedClass={pressedClass}
+                            />
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={handleExportTtsAudiobook}
+                            disabled={isExportingTtsAudiobook || selectedTtsExportChapterValues.length === 0}
+                            className={`w-full h-10 rounded-xl text-sm font-bold text-rose-400 flex items-center justify-center gap-2 ${btnClass} ${activeBtnClass} transition-all disabled:opacity-50`}
+                          >
+                            {isExportingTtsAudiobook ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                            {isExportingTtsAudiobook ? '正在导出...' : '导出选中章节'}
+                          </button>
+
+                          <div className="text-[11px] text-slate-500 leading-relaxed">
+                            导出格式：ZIP（每章 1 个 WAV 音频文件，字幕为独立 SRT 文件）
+                          </div>
+
+                          {ttsExportStatus && (
+                            <div className="text-[11px] leading-relaxed" style={{ color: 'rgb(var(--theme-500) / 1)' }}>
+                              {ttsExportStatus.text}
+                            </div>
+                          )}
+                          {ttsExportStatus && ttsExportStatus.skippedReasons.length > 0 && (
+                            <div className="text-[11px] leading-relaxed space-y-1" style={{ color: 'rgb(var(--theme-500) / 1)' }}>
+                              {ttsExportStatus.skippedReasons.map((item, index) => (
+                                <div key={`${item}-${index}`}>{item}</div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       </>
                     )}
