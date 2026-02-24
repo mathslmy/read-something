@@ -167,10 +167,11 @@ const VINTAGE_PARCHMENT_BUTTERFLY_CSS = [
   '}',
   '',
   '/* ─── 斜体 ─── */',
-  '.studyhub-note-editor em {',
+  '.studyhub-note-editor em,',
+  '.studyhub-note-editor i {',
   '  color: #786045 !important;',
-  '  font-style: italic;',
-  "  font-family: 'Georgia', serif;",
+  '  font-style: italic !important;',
+  '  font-family: inherit !important;',
   '}',
   '',
   '/* ─── 列表（无序列表用 background-image 代替 ::before 伪元素，规避 iOS Safari IME 渲染 bug） ─── */',
@@ -282,7 +283,8 @@ const VINTAGE_PARCHMENT_BUTTERFLY_CSS = [
   '  background-image: linear-gradient(90deg, transparent 0%, rgba(180, 150, 100, 0.6) 15%, rgba(180, 150, 100, 0.6) 85%, transparent 100%);',
   '}',
   '',
-  '.dark-mode .studyhub-note-editor em {',
+  '.dark-mode .studyhub-note-editor em,',
+  '.dark-mode .studyhub-note-editor i {',
   '  color: #a89880 !important;',
   '}',
   '',
@@ -307,6 +309,24 @@ const VINTAGE_PARCHMENT_BUTTERFLY_CSS = [
   '  color: rgba(180, 150, 100, 0.3);',
   '}',
 ].join('\n');
+
+const LEGACY_EM_SELECTOR = '.studyhub-note-editor em {';
+const LEGACY_DARK_EM_SELECTOR = '.dark-mode .studyhub-note-editor em {';
+const LEGACY_ITALIC_STYLE = '  font-style: italic;';
+const LEGACY_GEORGIA_FONT = "  font-family: 'Georgia', serif;";
+
+export const normalizeLegacyPaperCss = (css: string): string => {
+  if (!css) return css;
+  if (!css.includes(LEGACY_EM_SELECTOR) && !css.includes(LEGACY_GEORGIA_FONT)) return css;
+
+  let normalized = css;
+  normalized = normalized.replaceAll(LEGACY_EM_SELECTOR, '.studyhub-note-editor em,\n.studyhub-note-editor i {');
+  normalized = normalized.replaceAll(LEGACY_DARK_EM_SELECTOR, '.dark-mode .studyhub-note-editor em,\n.dark-mode .studyhub-note-editor i {');
+  normalized = normalized.replaceAll(LEGACY_ITALIC_STYLE, '  font-style: italic !important;');
+  normalized = normalized.replaceAll(LEGACY_GEORGIA_FONT, '  font-family: inherit !important;');
+
+  return normalized;
+};
 
 export const DEFAULT_PAPER_CSS_PRESETS: ReaderCssPreset[] = [
   {

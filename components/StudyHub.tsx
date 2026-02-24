@@ -27,7 +27,7 @@ import {
 import { callAiModel, sanitizeTextForAiPrompt } from '../utils/readerAiEngine';
 import { getBookContent } from '../utils/bookContentStorage';
 import { estimateRagSafeOffset, retrieveRelevantChunks, isEmbedModelLoaded } from '../utils/ragEngine';
-import { DEFAULT_PAPER_CSS_PRESETS, DEFAULT_PAPER_CSS_PRESET_ID } from '../utils/paperCssPresets';
+import { DEFAULT_PAPER_CSS_PRESETS, DEFAULT_PAPER_CSS_PRESET_ID, normalizeLegacyPaperCss } from '../utils/paperCssPresets';
 
 interface StudyHubProps {
   isDarkMode: boolean;
@@ -72,6 +72,39 @@ const DEFAULT_NOTE_TOOLBAR_STATE: NoteToolbarState = {
   italic: false,
   orderedList: false,
   bulletList: false,
+};
+
+const normalizeNotebookPaperCss = (notebook: Notebook): Notebook => {
+  let changed = false;
+
+  const nextDraft = typeof notebook.paperCssDraft === 'string'
+    ? normalizeLegacyPaperCss(notebook.paperCssDraft)
+    : notebook.paperCssDraft;
+  if (nextDraft !== notebook.paperCssDraft) changed = true;
+
+  const nextApplied = typeof notebook.paperCssApplied === 'string'
+    ? normalizeLegacyPaperCss(notebook.paperCssApplied)
+    : notebook.paperCssApplied;
+  if (nextApplied !== notebook.paperCssApplied) changed = true;
+
+  let nextPresets = notebook.paperCssPresets;
+  if (Array.isArray(notebook.paperCssPresets)) {
+    const mapped = notebook.paperCssPresets.map((preset) => {
+      const nextCss = normalizeLegacyPaperCss(preset.css || '');
+      if (nextCss === preset.css) return preset;
+      changed = true;
+      return { ...preset, css: nextCss };
+    });
+    nextPresets = mapped;
+  }
+
+  if (!changed) return notebook;
+  return {
+    ...notebook,
+    paperCssDraft: nextDraft,
+    paperCssApplied: nextApplied,
+    paperCssPresets: nextPresets,
+  };
 };
 
 const PAPER_CSS_PLACEHOLDER = `可用类名：
@@ -314,8 +347,32 @@ const StudyHub: React.FC<StudyHubProps> = ({
 
   // ─── Load data ───
   useEffect(() => {
-    getAllNotebooks().then(setNotebooks).catch(() => {});
-    getAllQuizSessions().then(setQuizSessions).catch(() => {});
+    let cancelled = false;
+    const loadData = async () => {
+      try {
+        const [loadedNotebooks, loadedQuizSessions] = await Promise.all([
+          getAllNotebooks(),
+          getAllQuizSessions(),
+        ]);
+        if (cancelled) return;
+
+        const normalizedNotebooks = loadedNotebooks.map(normalizeNotebookPaperCss);
+        setNotebooks(normalizedNotebooks);
+        setQuizSessions(loadedQuizSessions);
+
+        const changedNotebooks = normalizedNotebooks.filter((notebook, index) => notebook !== loadedNotebooks[index]);
+        if (changedNotebooks.length > 0) {
+          await Promise.all(changedNotebooks.map((notebook) => saveNotebook(notebook).catch(() => undefined)));
+        }
+      } catch {
+        // keep default empty state
+      }
+    };
+
+    void loadData();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // ─── Auto-save note content with debounce ───
@@ -1297,7 +1354,7 @@ const StudyHub: React.FC<StudyHubProps> = ({
 
   const updateNotebook = async (patch: Partial<Notebook>) => {
     if (!activeNotebook) return;
-    const updated = { ...activeNotebook, ...patch, updatedAt: Date.now() };
+    const updated = normalizeNotebookPaperCss({ ...activeNotebook, ...patch, updatedAt: Date.now() });
     setActiveNotebook(updated);
     setNotebooks((prev) => prev.map((n) => n.id === updated.id ? updated : n));
     await saveNotebook(updated);
@@ -1358,8 +1415,9 @@ const StudyHub: React.FC<StudyHubProps> = ({
     if (!activeNotebook || !presetId) return;
     const preset = (activeNotebook.paperCssPresets ?? DEFAULT_PAPER_CSS_PRESETS).find((p) => p.id === presetId);
     if (!preset) return;
-    setPaperCssDraft(preset.css);
-    void updateNotebook({ selectedPaperCssPresetId: presetId, paperCssDraft: preset.css });
+    const normalizedCss = normalizeLegacyPaperCss(preset.css);
+    setPaperCssDraft(normalizedCss);
+    void updateNotebook({ selectedPaperCssPresetId: presetId, paperCssDraft: normalizedCss });
   };
 
   // ─── Note CRUD ───
