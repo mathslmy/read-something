@@ -59,11 +59,15 @@ const VINTAGE_PARCHMENT_BUTTERFLY_CSS = [
   '  position: relative;',
   '  overflow: visible !important;',
   '  margin-top: 30px !important;',
+  '  transform: translate3d(0, 0, 0);',
+  '  -webkit-backface-visibility: hidden;',
+  '  backface-visibility: hidden;',
+  '  will-change: transform, box-shadow;',
   '}',
   '',
   '/* Hover 态：更明显的悬浮抬起效果 */',
-  '.sh-paper:hover {',
-  '  transform: translateY(-5px) !important;',
+'.sh-paper:hover {',
+  '  transform: translate3d(0, -5px, 0) !important;',
   '  box-shadow:',
   '    inset 0 0 50px rgba(139, 90, 43, 0.1),',
   '    inset 0 1px 3px rgba(255, 255, 255, 0.6),',
@@ -224,8 +228,8 @@ const VINTAGE_PARCHMENT_BUTTERFLY_CSS = [
   '    0 3px 10px rgba(0, 0, 0, 0.4) !important;',
   '}',
   '',
-  '.dark-mode .sh-paper:hover {',
-  '  transform: translateY(-5px) !important;',
+'.dark-mode .sh-paper:hover {',
+  '  transform: translate3d(0, -5px, 0) !important;',
   '  box-shadow:',
   '    inset 0 0 60px rgba(0, 0, 0, 0.5),',
   '    inset 0 1px 3px rgba(80, 65, 40, 0.1),',
@@ -314,16 +318,35 @@ const LEGACY_EM_SELECTOR = '.studyhub-note-editor em {';
 const LEGACY_DARK_EM_SELECTOR = '.dark-mode .studyhub-note-editor em {';
 const LEGACY_ITALIC_STYLE = '  font-style: italic;';
 const LEGACY_GEORGIA_FONT = "  font-family: 'Georgia', serif;";
+const LEGACY_HOVER_TRANSLATE = '  transform: translateY(-5px) !important;';
+const LEGACY_MARGIN_TOP = '  margin-top: 30px !important;';
+const MODERN_HOVER_TRANSLATE = '  transform: translate3d(0, -5px, 0) !important;';
+const MODERN_COMPOSITING_HINTS = [
+  '  transform: translate3d(0, 0, 0);',
+  '  -webkit-backface-visibility: hidden;',
+  '  backface-visibility: hidden;',
+  '  will-change: transform, box-shadow;',
+].join('\n');
 
 export const normalizeLegacyPaperCss = (css: string): string => {
   if (!css) return css;
-  if (!css.includes(LEGACY_EM_SELECTOR) && !css.includes(LEGACY_GEORGIA_FONT)) return css;
+  const hasItalicLegacy = css.includes(LEGACY_EM_SELECTOR) || css.includes(LEGACY_GEORGIA_FONT);
+  const hasHoverLegacy = css.includes(LEGACY_HOVER_TRANSLATE);
+  if (!hasItalicLegacy && !hasHoverLegacy) return css;
 
   let normalized = css;
-  normalized = normalized.replaceAll(LEGACY_EM_SELECTOR, '.studyhub-note-editor em,\n.studyhub-note-editor i {');
-  normalized = normalized.replaceAll(LEGACY_DARK_EM_SELECTOR, '.dark-mode .studyhub-note-editor em,\n.dark-mode .studyhub-note-editor i {');
-  normalized = normalized.replaceAll(LEGACY_ITALIC_STYLE, '  font-style: italic !important;');
-  normalized = normalized.replaceAll(LEGACY_GEORGIA_FONT, '  font-family: inherit !important;');
+  if (hasItalicLegacy) {
+    normalized = normalized.replaceAll(LEGACY_EM_SELECTOR, '.studyhub-note-editor em,\n.studyhub-note-editor i {');
+    normalized = normalized.replaceAll(LEGACY_DARK_EM_SELECTOR, '.dark-mode .studyhub-note-editor em,\n.dark-mode .studyhub-note-editor i {');
+    normalized = normalized.replaceAll(LEGACY_ITALIC_STYLE, '  font-style: italic !important;');
+    normalized = normalized.replaceAll(LEGACY_GEORGIA_FONT, '  font-family: inherit !important;');
+  }
+  if (hasHoverLegacy) {
+    normalized = normalized.replaceAll(LEGACY_HOVER_TRANSLATE, MODERN_HOVER_TRANSLATE);
+    if (normalized.includes(LEGACY_MARGIN_TOP) && !normalized.includes('will-change: transform, box-shadow;')) {
+      normalized = normalized.replace(LEGACY_MARGIN_TOP, `${LEGACY_MARGIN_TOP}\n${MODERN_COMPOSITING_HINTS}`);
+    }
+  }
 
   return normalized;
 };
