@@ -3909,14 +3909,9 @@ const Reader: React.FC<ReaderProps> = ({
   };
 
   const registerFontFaceFromSource = async (fontFamily: string, sourceUrl: string) => {
-    const src = `url("${sourceUrl}")`;
-    const normalFace = new FontFace(fontFamily, src);
-    // iOS Safari: also register italic variant pointing to the same file,
-    // otherwise Safari falls back to a system font when font-style:italic is applied.
-    const italicFace = new FontFace(fontFamily, src, { style: 'italic' });
-    const [loadedNormal, loadedItalic] = await Promise.all([normalFace.load(), italicFace.load()]);
-    document.fonts.add(loadedNormal);
-    document.fonts.add(loadedItalic);
+    const fontFace = new FontFace(fontFamily, `url("${sourceUrl}")`);
+    const loaded = await fontFace.load();
+    document.fonts.add(loaded);
   };
 
   const waitForStylesheetReady = (link: HTMLLinkElement, url: string) => {
@@ -4166,7 +4161,6 @@ const Reader: React.FC<ReaderProps> = ({
     fontKerning: 'normal',
     fontVariantEastAsian: 'normal',
     fontFeatureSettings: '"kern" 1, "liga" 1',
-    fontSynthesis: 'style',
     textAlign: readerTypography.textAlign,
     ['--tw-prose-body' as string]: readerTypography.textColor,
     ['--tw-prose-headings' as string]: readerTypography.textColor,

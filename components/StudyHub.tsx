@@ -29,46 +29,6 @@ import { getBookContent } from '../utils/bookContentStorage';
 import { estimateRagSafeOffset, retrieveRelevantChunks, isEmbedModelLoaded } from '../utils/ragEngine';
 import { DEFAULT_PAPER_CSS_PRESETS, DEFAULT_PAPER_CSS_PRESET_ID } from '../utils/paperCssPresets';
 
-/**
- * iOS Safari won't synthesize italic for custom fonts that lack an italic @font-face variant.
- * Instead it falls back to a system font that has native italic.
- * Fix: duplicate each @font-face block with font-style:italic so Safari treats the same
- * font file as both normal AND italic, preventing the fallback.
- */
-const augmentCssWithItalicFontFace = (css: string): string => {
-  const blocks: string[] = [];
-  let depth = 0;
-  let blockStart = -1;
-  const marker = '@font-face';
-  for (let i = 0; i < css.length; i++) {
-    if (depth === 0 && css.substring(i, i + marker.length).toLowerCase() === marker) {
-      const braceIdx = css.indexOf('{', i + marker.length);
-      if (braceIdx === -1) continue;
-      blockStart = i;
-      depth = 1;
-      i = braceIdx;
-      continue;
-    }
-    if (depth > 0) {
-      if (css[i] === '{') depth++;
-      if (css[i] === '}') {
-        depth--;
-        if (depth === 0) {
-          blocks.push(css.substring(blockStart, i + 1));
-          blockStart = -1;
-        }
-      }
-    }
-  }
-  if (blocks.length === 0) return css;
-  const additions: string[] = [];
-  for (const block of blocks) {
-    if (/font-style\s*:\s*(italic|oblique)/i.test(block)) continue;
-    additions.push(block.replace(/\}\s*$/, ' font-style: italic; }'));
-  }
-  return additions.length > 0 ? css + '\n' + additions.join('\n') : css;
-};
-
 interface StudyHubProps {
   isDarkMode: boolean;
   books: Book[];
@@ -3815,7 +3775,7 @@ const StudyHub: React.FC<StudyHubProps> = ({
       {/* Notes views — each view manages its own fixed header + scroll area */}
       {activeTab === 'notes' && (
         <div key={notesView} className={`flex-1 flex flex-col overflow-hidden ${notesViewAnimClass}`}>
-          {activeNotebook?.paperCssApplied && <style>{augmentCssWithItalicFontFace(activeNotebook.paperCssApplied)}</style>}
+          {activeNotebook?.paperCssApplied && <style>{activeNotebook.paperCssApplied}</style>}
           {notesView === 'list' && renderNotebookList()}
           {notesView === 'detail' && renderNotebookDetail()}
           {notesView === 'editor' && renderNoteEditor()}

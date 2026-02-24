@@ -808,11 +808,4 @@
         margin: 0.1rem 0;
       }
 
-      /* iOS Safari won't synthesize italic for custom fonts that lack a dedicated italic variant.
-         font-synthesis: style explicitly allows the browser to generate synthetic italics. */
-      .studyhub-note-editor {
-        font-synthesis: style;
-        -webkit-font-smoothing: antialiased;
-      }
-
 @tailwind utilities;
