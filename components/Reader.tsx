@@ -4003,7 +4003,13 @@ const Reader: React.FC<ReaderProps> = ({
 
     const fontFamilyName = normalizeStoredFontFamily(option.family) || sanitizeFontFamily(option.label);
     if (!fontFamilyName) return;
-    if (document.fonts.check(`16px "${fontFamilyName}"`)) return;
+    // document.fonts.check() 对未注册的字体族名会返回 true（无需加载 = 通过），
+    // 导致首次加载外部字体时直接跳过 registerFontFaceFromSource。
+    // 改为遍历已注册的 FontFace 条目判断是否已加载。
+    const alreadyLoaded = Array.from(document.fonts).some(
+      (face) => face.family === fontFamilyName && face.status === 'loaded',
+    );
+    if (alreadyLoaded) return;
     await registerFontFaceFromSource(fontFamilyName, option.sourceUrl);
     await warmUpReaderFontFamily(fontFamilyName);
   };
@@ -4038,6 +4044,13 @@ const Reader: React.FC<ReaderProps> = ({
       setFontPanelMessage('\u5b57\u4f53\u94fe\u63a5\u65e0\u6548\u6216\u52a0\u8f7d\u5931\u8d25');
       console.error('Failed to apply font URL:', error);
     }
+  };
+
+  const handleDeleteFontPreset = () => {
+    if (BUILTIN_READER_FONT_ID_SET.has(selectedReaderFontId)) return;
+    setReaderFontOptions(prev => prev.filter(o => o.id !== selectedReaderFontId));
+    setSelectedReaderFontId(DEFAULT_READER_FONT_ID);
+    setFontPanelMessage('已删除字体预设');
   };
 
   const resetReaderFontOnly = () => {
@@ -4704,6 +4717,16 @@ const Reader: React.FC<ReaderProps> = ({
                     >
                       <Save size={14} />
                     </button>
+                    {!BUILTIN_READER_FONT_ID_SET.has(selectedReaderFontId) && (
+                      <button
+                        type="button"
+                        onClick={handleDeleteFontPreset}
+                        className={typographyIconButtonClass}
+                        title={'\u5220\u9664\u5f53\u524d\u5b57\u4f53\u9884\u8bbe'}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={resetReaderFontOnly}

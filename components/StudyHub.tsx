@@ -1090,6 +1090,13 @@ const StudyHub: React.FC<StudyHubProps> = ({
     const normalizedQuery = sanitizeTextForAiPrompt(query || '').trim();
     if (!normalizedQuery) return {};
 
+    // 只对开启了 RAG 的书籍执行检索，每本书独立检测
+    const ragEnabledBookIds = bookIds.filter((id) => {
+      const book = books.find((b) => b.id === id);
+      return book?.ragEnabled;
+    });
+    if (ragEnabledBookIds.length === 0) return {};
+
     const wasNotLoaded = !isEmbedModelLoaded();
     if (wasNotLoaded) showNotification('RAG 语义模型首次加载中…');
 
@@ -1099,9 +1106,9 @@ const StudyHub: React.FC<StudyHubProps> = ({
       const topK = options?.topK || 3;
       const perBook = options?.perBook || false;
 
-      // 准备每本书的安全偏移量
+      // 准备每本书的安全偏移量（仅 RAG 已启用的书）
       const bookInfos: Array<{ bookId: string; title: string; safeOffset: number }> = [];
-      for (const bookId of bookIds) {
+      for (const bookId of ragEnabledBookIds) {
         const book = books.find((b) => b.id === bookId);
         if (!book) continue;
         const stored = await getBookContent(bookId);
@@ -1302,6 +1309,8 @@ const StudyHub: React.FC<StudyHubProps> = ({
       } catch (err) {
         if (err instanceof DOMException && err.name === 'AbortError') break;
         console.error('AI comment error:', err);
+        const msg = err instanceof Error ? err.message : '未知错误';
+        showNotification(`AI 评论生成失败：${msg}`, 'error');
       }
     }
 
@@ -1382,6 +1391,8 @@ const StudyHub: React.FC<StudyHubProps> = ({
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return;
       console.error('AI reply error:', err);
+      const msg = err instanceof Error ? err.message : '未知错误';
+      showNotification(`AI 回复生成失败：${msg}`, 'error');
     } finally {
       setIsAiLoading(false);
       abortRef.current = null;
@@ -1463,6 +1474,8 @@ const StudyHub: React.FC<StudyHubProps> = ({
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return;
       console.error('AI refresh error:', err);
+      const msg = err instanceof Error ? err.message : '未知错误';
+      showNotification(`AI 评论刷新失败：${msg}`, 'error');
     } finally {
       setIsAiLoading(false);
       abortRef.current = null;
@@ -1531,7 +1544,9 @@ const StudyHub: React.FC<StudyHubProps> = ({
       });
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return;
-      setQuizError(`生成失败：${err instanceof Error ? err.message : '未知错误'}`);
+      const msg = err instanceof Error ? err.message : '未知错误';
+      setQuizError(`生成失败：${msg}`);
+      showNotification(`问答集生成失败：${msg}`, 'error');
     } finally {
       setIsQuizGenerating(false);
       abortRef.current = null;
@@ -1576,7 +1591,9 @@ const StudyHub: React.FC<StudyHubProps> = ({
         session.characterName = character.nickname || character.name;
       } catch (err) {
         console.error('Quiz comment error:', err);
+        const msg = err instanceof Error ? err.message : '未知错误';
         session.overallComment = '（总评生成失败）';
+        showNotification(`总评生成失败：${msg}`, 'error');
       } finally {
         setIsAiLoading(false);
       }
