@@ -12,7 +12,7 @@ import {
 
 export const BUILT_IN_TUTORIAL_BOOK_ID = '__built_in_tutorial__';
 /** Bump this number whenever tutorial content is changed so existing users get the update. */
-export const BUILT_IN_TUTORIAL_VERSION = 3.4;
+export const BUILT_IN_TUTORIAL_VERSION = 3.5;
 
 const TUTORIAL_UNREAD_KEY = '__built_in_tutorial_unread__';
 export const isTutorialUnread = (): boolean => {
@@ -36,6 +36,13 @@ const img = (imageRef: string, alt: string, w?: number, h?: number): ReaderConte
 /*  更新记录                                                            */
 /* ------------------------------------------------------------------ */
 const CH0_CONTENT = `更新记录
+
+-更新时间：2026.02.24
+
+本次更新内容：
+
+1.新增笔记自定义CSS美化功能
+读书笔记选纸张界面支持自定义的CSS美化功能，并且内置了一个预设。
 
 -更新时间：2026.02.23
 
@@ -66,6 +73,11 @@ const CH0_CONTENT = `更新记录
 
 const CH0_BLOCKS: ReaderContentBlock[] = [
   text('更新记录'),
+  text(`-更新时间：2026.02.24`),
+  text(`本次更新内容：
+
+1.新增笔记自定义CSS美化功能
+读书笔记选纸张界面支持自定义的CSS美化功能，并且内置了一个预设。`),
   text(`-更新时间：2026.02.23`),
   text(`本次更新内容：
 
@@ -471,6 +483,22 @@ const CH6_CONTENT = `第六章 共读集
 1.笔记本：
 创建笔记本时需要填写标题，并绑定一本或多本书。
 可以为笔记本设置封面和纸张背景纹理。
+选纸张界面底部支持自定义 CSS 美化，可用的 CSS 类名如下：
+.sh-paper — 纸张外容器（控制纸张整体背景、边框、阴影等）
+.sh-paper-inner — 纸张内层（控制内边距、伪元素装饰等）
+.studyhub-note-editor — 笔记编辑器（控制文字颜色、字体等）
+.studyhub-note-editor h1 — 一级标题
+.studyhub-note-editor h2 — 二级标题
+.studyhub-note-editor h3 — 三级标题
+.studyhub-note-editor p — 正文段落
+.studyhub-note-editor strong — 粗体文字
+.studyhub-note-editor em — 斜体文字
+.studyhub-note-editor ul — 无序列表
+.studyhub-note-editor ol — 有序列表
+.studyhub-note-editor li — 列表项
+.sh-note-placeholder — 编辑器空白时的占位提示文字
+暗色模式下在类名前加 .dark-mode，例如：.dark-mode .sh-paper { }
+如果在 CSS 中定义了纸张背景，需加 !important 以覆盖内置纸张背景。
 每个笔记本可以绑定一个 user 人设（后续不可更改）。
 在笔记本中可以创建多条笔记。
 
@@ -493,6 +521,22 @@ const CH6_BLOCKS: ReaderContentBlock[] = [
   text(`1.笔记本：
 创建笔记本时需要填写标题，并绑定一本或多本书。
 可以为笔记本设置封面和纸张背景纹理。
+选纸张界面底部支持自定义 CSS 美化，可用的 CSS 类名如下：
+.sh-paper — 纸张外容器（控制纸张整体背景、边框、阴影等）
+.sh-paper-inner — 纸张内层（控制内边距、伪元素装饰等）
+.studyhub-note-editor — 笔记编辑器（控制文字颜色、字体等）
+.studyhub-note-editor h1 — 一级标题
+.studyhub-note-editor h2 — 二级标题
+.studyhub-note-editor h3 — 三级标题
+.studyhub-note-editor p — 正文段落
+.studyhub-note-editor strong — 粗体文字
+.studyhub-note-editor em — 斜体文字
+.studyhub-note-editor ul — 无序列表
+.studyhub-note-editor ol — 有序列表
+.studyhub-note-editor li — 列表项
+.sh-note-placeholder — 编辑器空白时的占位提示文字
+暗色模式下在类名前加 .dark-mode，例如：.dark-mode .sh-paper { }
+如果在 CSS 中定义了纸张背景，需加 !important 以覆盖内置纸张背景。
 每个笔记本可以绑定一个 user 人设（后续不可更改）。
 在笔记本中可以创建多条笔记。
 
