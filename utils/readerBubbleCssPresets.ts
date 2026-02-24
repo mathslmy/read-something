@@ -392,8 +392,6 @@ const BUILTIN_READER_BUBBLE_CSS_PRESETS: ReaderCssPreset[] = [
 
 export const DEFAULT_READER_BUBBLE_CSS_PRESETS: ReaderCssPreset[] = BUILTIN_READER_BUBBLE_CSS_PRESETS.map((item) => ({ ...item }));
 
-const BUILTIN_IDS = new Set<string>(BUILTIN_READER_BUBBLE_CSS_PRESETS.map((item) => item.id));
-
 const normalizeReaderCssPreset = (value: unknown): ReaderCssPreset | null => {
   if (!value || typeof value !== 'object') return null;
   const source = value as Partial<ReaderCssPreset>;
@@ -407,22 +405,18 @@ const normalizeReaderCssPreset = (value: unknown): ReaderCssPreset | null => {
 export const normalizeReaderBubbleCssPresets = (source: unknown): ReaderCssPreset[] => {
   if (!Array.isArray(source)) return DEFAULT_READER_BUBBLE_CSS_PRESETS.map((item) => ({ ...item }));
 
-  const customPresets: ReaderCssPreset[] = [];
-  const seenCustomIds = new Set<string>();
+  const presets: ReaderCssPreset[] = [];
+  const seenIds = new Set<string>();
 
   source.forEach((rawItem) => {
     const preset = normalizeReaderCssPreset(rawItem);
     if (!preset) return;
-    if (BUILTIN_IDS.has(preset.id)) return;
     if (REMOVED_PRESET_IDS.has(preset.id)) return;
     if (REMOVED_PRESET_NAMES.has(preset.name)) return;
-    if (seenCustomIds.has(preset.id)) return;
-    seenCustomIds.add(preset.id);
-    customPresets.push(preset);
+    if (seenIds.has(preset.id)) return;
+    seenIds.add(preset.id);
+    presets.push(preset);
   });
 
-  return [
-    ...BUILTIN_READER_BUBBLE_CSS_PRESETS.map((item) => ({ ...item })),
-    ...customPresets.map((item) => ({ ...item })),
-  ];
+  return presets;
 };

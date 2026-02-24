@@ -5,10 +5,11 @@ import {
   Loader2, BookMarked, CheckCircle2, NotebookPen, CircleCheckBig,
   BookPlus, UserCircle, Edit2, Link, FileUp, ChevronDown, Feather, Scroll,
   Heading1, Heading2, Heading3, Pilcrow, Bold, Italic, ListOrdered, List as ListIcon,
+  Save, Eraser,
 } from 'lucide-react';
 import {
   Book, ApiConfig, RagApiConfigResolver, Notebook, StudyNote, StudyNoteCommentThread,
-  StudyNoteCommentMessage, QuizSession, QuizConfig, QuizQuestion,
+  StudyNoteCommentMessage, QuizSession, QuizConfig, QuizQuestion, ReaderCssPreset,
 } from '../types';
 import { Persona, Character, WorldBookEntry } from './settings/types';
 import ResolvedImage from './ResolvedImage';
@@ -26,6 +27,7 @@ import {
 import { callAiModel, sanitizeTextForAiPrompt } from '../utils/readerAiEngine';
 import { getBookContent } from '../utils/bookContentStorage';
 import { estimateRagSafeOffset, retrieveRelevantChunks, isEmbedModelLoaded } from '../utils/ragEngine';
+import { DEFAULT_PAPER_CSS_PRESETS } from '../utils/paperCssPresets';
 
 interface StudyHubProps {
   isDarkMode: boolean;
@@ -72,6 +74,103 @@ const DEFAULT_NOTE_TOOLBAR_STATE: NoteToolbarState = {
   bulletList: false,
 };
 
+const PAPER_CSS_PLACEHOLDER = `可用类名：
+.sh-paper             /* 纸张外容器 */
+.sh-paper-inner       /* 纸张内层 */
+.studyhub-note-editor /* 编辑器 */
+  h1 / h2 / h3 / p / strong / em
+  ul / ol / li
+.sh-note-placeholder  /* 占位提示文字 */
+
+暗色模式：.dark-mode .sh-paper { }
+应用后自动覆盖内置纸张背景`;
+
+interface PaperCssOptionItem {
+  value: string;
+  label: string;
+}
+
+const PaperCssSingleSelectDropdown = ({
+  options,
+  value,
+  onChange,
+  placeholder = '选择...',
+  inputClass,
+  cardClass,
+  isDarkMode,
+}: {
+  options: PaperCssOptionItem[];
+  value: string;
+  onChange: (val: string) => void;
+  placeholder?: string;
+  inputClass: string;
+  cardClass: string;
+  isDarkMode: boolean;
+}) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const selectedOption = options.find((o) => o.value === value) || (value ? { value, label: value } : null);
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <div
+        onClick={() => setIsOpen(!isOpen)}
+        className={`w-full p-2 min-h-[42px] rounded-xl flex items-center justify-between cursor-pointer transition-all active:scale-[0.99] ${inputClass}`}
+      >
+        <div className="flex items-center gap-2 px-2">
+          {selectedOption ? (
+            <span className={`text-sm font-medium truncate ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>
+              {selectedOption.label}
+            </span>
+          ) : (
+            <span className="text-sm opacity-50">{placeholder}</span>
+          )}
+        </div>
+        <div className="opacity-50 pr-2">
+          <ChevronDown size={16} className={`transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
+        </div>
+      </div>
+
+      {isOpen && (
+        <div className={`absolute top-full left-0 right-0 mt-2 p-2 rounded-xl z-[50] max-h-60 overflow-y-auto ${cardClass} border border-slate-400/10 animate-fade-in shadow-2xl`}>
+          {options.length > 0 ? options.map((opt) => {
+            const isSelected = opt.value === value;
+            return (
+              <div
+                key={opt.value}
+                onClick={() => { onChange(opt.value); setIsOpen(false); }}
+                className={`flex items-center gap-2 p-2 rounded-lg text-sm cursor-pointer transition-colors ${
+                  isSelected
+                    ? 'text-rose-400 font-bold bg-rose-400/10'
+                    : isDarkMode ? 'text-slate-300 hover:bg-slate-700' : 'text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                <div className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 ${isSelected ? 'bg-rose-400 border-rose-400' : 'border-slate-400'}`}>
+                  {isSelected && <Check size={10} className="text-white" />}
+                </div>
+                <span className="truncate">{opt.label}</span>
+              </div>
+            );
+          }) : (
+            <div className="p-2 text-xs text-slate-400 text-center">无可用选项</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const StudyHub: React.FC<StudyHubProps> = ({
   isDarkMode, books, personas, activePersonaId, characters,
   activeCharacterId, worldBookEntries, apiConfig, readingExcerptCharCount, showNotification,
@@ -93,6 +192,11 @@ const StudyHub: React.FC<StudyHubProps> = ({
     : 'neu-btn';
   const headingClass = isDarkMode ? 'text-slate-200' : 'text-slate-700';
   const subTextClass = isDarkMode ? 'text-slate-400' : 'text-slate-500';
+  const activeBtnClass = isDarkMode
+    ? 'active:shadow-[inset_3px_3px_6px_#232b39,inset_-3px_-3px_6px_#374357] active:translate-y-px'
+    : 'active:shadow-[inset_3px_3px_6px_var(--neu-shadow-dark),inset_-3px_-3px_6px_var(--neu-shadow-light)] active:translate-y-px';
+  const disabledIconButtonClass = `${btnClass} ${isDarkMode ? 'text-slate-500' : 'text-slate-400'} opacity-55 cursor-not-allowed`;
+  const enabledDangerIconButtonClass = `${isDarkMode ? 'text-[#cf8f97]' : 'text-[#bf616b]'} ${btnClass} ${activeBtnClass}`;
 
   // ─── Top-level state ───
   const [activeTab, setActiveTab] = useState<HubTab>('notes');
@@ -148,6 +252,15 @@ const StudyHub: React.FC<StudyHubProps> = ({
   const [tempPaperUrl, setTempPaperUrl] = useState('');
   const paperFileInputRef = useRef<HTMLInputElement | null>(null);
   const [resolvedPaperBgUrl, setResolvedPaperBgUrl] = useState<string>('');
+
+  // ─── Paper CSS editor state ───
+  const [paperCssDraft, setPaperCssDraft] = useState('');
+  const [paperCssPresetName, setPaperCssPresetName] = useState('');
+  const [paperCssEditingPresetId, setPaperCssEditingPresetId] = useState<string | null>(null);
+  const [paperCssApplySuccess, setPaperCssApplySuccess] = useState(false);
+  const [paperCssClearSuccess, setPaperCssClearSuccess] = useState(false);
+  const paperCssApplyTimerRef = useRef<number | null>(null);
+  const paperCssClearTimerRef = useRef<number | null>(null);
 
   // ─── Quiz state ───
   const [quizView, setQuizView] = useState<QuizView>('history');
@@ -240,6 +353,15 @@ const StudyHub: React.FC<StudyHubProps> = ({
     resolve();
     return () => { cancelled = true; if (objectUrl) URL.revokeObjectURL(objectUrl); };
   }, [activeNotebook?.paperBgUrl]);
+
+  // ─── Sync paper CSS draft from activeNotebook ───
+  useEffect(() => {
+    if (activeNotebook) {
+      setPaperCssDraft(activeNotebook.paperCssDraft || '');
+      setPaperCssPresetName('');
+      setPaperCssEditingPresetId(null);
+    }
+  }, [activeNotebook?.id]);
 
   // ─── Compute paper style for note cards & editor ───
   const paperStyle = (() => {
@@ -443,19 +565,49 @@ const StudyHub: React.FC<StudyHubProps> = ({
       return text ? [text] : [];
     }
     if (tag === 'ul') {
-      const items = Array.from(element.children)
-        .filter((child) => child.tagName.toLowerCase() === 'li')
-        .map((li) => extractInlineMarkdownFromNode(li).trim())
-        .filter(Boolean)
-        .map((item) => `- ${item}`);
+      const items: string[] = [];
+      Array.from(element.childNodes).forEach((child) => {
+        if (child.nodeType === Node.ELEMENT_NODE) {
+          const childTag = (child as HTMLElement).tagName.toLowerCase();
+          if (childTag === 'li') {
+            const text = extractInlineMarkdownFromNode(child).trim();
+            if (text) items.push(`- ${text}`);
+          } else if (childTag === 'ul' || childTag === 'ol') {
+            // Nested list (browser anomaly) — process as separate list block
+            items.push(...extractBlocksFromNode(child));
+          } else {
+            // Non-LI children (div/span created by browser with list-style-type:none)
+            const text = extractInlineMarkdownFromNode(child).trim();
+            if (text) items.push(`- ${text}`);
+          }
+        } else {
+          const text = extractInlineMarkdownFromNode(child).trim();
+          if (text) items.push(`- ${text}`);
+        }
+      });
       return items;
     }
     if (tag === 'ol') {
-      const items = Array.from(element.children)
-        .filter((child) => child.tagName.toLowerCase() === 'li')
-        .map((li) => extractInlineMarkdownFromNode(li).trim())
-        .filter(Boolean)
-        .map((item, idx) => `${idx + 1}. ${item}`);
+      const items: string[] = [];
+      let idx = 0;
+      Array.from(element.childNodes).forEach((child) => {
+        if (child.nodeType === Node.ELEMENT_NODE) {
+          const childTag = (child as HTMLElement).tagName.toLowerCase();
+          if (childTag === 'li') {
+            const text = extractInlineMarkdownFromNode(child).trim();
+            if (text) { items.push(`${idx + 1}. ${text}`); idx++; }
+          } else if (childTag === 'ul' || childTag === 'ol') {
+            // Nested list (browser anomaly) — process as separate list block
+            items.push(...extractBlocksFromNode(child));
+          } else {
+            const text = extractInlineMarkdownFromNode(child).trim();
+            if (text) { items.push(`${idx + 1}. ${text}`); idx++; }
+          }
+        } else {
+          const text = extractInlineMarkdownFromNode(child).trim();
+          if (text) { items.push(`${idx + 1}. ${text}`); idx++; }
+        }
+      });
       return items;
     }
     if (tag === 'div' || tag === 'section' || tag === 'article') {
@@ -591,11 +743,17 @@ const StudyHub: React.FC<StudyHubProps> = ({
     if (!snapshot) return false;
 
     const { selection, editor, currentBlock } = snapshot;
-    const anchor = currentBlock
+    let anchor: HTMLElement | null = currentBlock
       ? ((currentBlock.tagName.toLowerCase() === 'li'
         ? (currentBlock.closest('ol, ul') as HTMLElement | null)
         : currentBlock) || currentBlock)
       : editor.lastElementChild as HTMLElement | null;
+
+    // Walk up to ensure anchor is a direct child of editor (prevents nesting lists)
+    while (anchor && anchor.parentElement && anchor.parentElement !== editor) {
+      anchor = anchor.parentElement;
+    }
+    if (!anchor || anchor.parentElement !== editor) anchor = editor.lastElementChild as HTMLElement | null;
 
     let insertRoot: HTMLElement;
     let caretNode: HTMLElement;
@@ -726,10 +884,54 @@ const StudyHub: React.FC<StudyHubProps> = ({
         });
         return;
       }
+
+      // Empty block → replace it directly in DOM to avoid execCommand + CSS reflow
+      // caret-jump bug (custom CSS ::before pseudo-elements on UL LI can cause
+      // the browser to misplace the caret after insertUnorderedList).
+      if (currentBlock && !isAlreadyActive) {
+        const list = document.createElement(isOrdered ? 'ol' : 'ul');
+        const item = document.createElement('li');
+        item.appendChild(document.createElement('br'));
+        list.appendChild(item);
+
+        const isLiInList = currentBlock.tagName.toLowerCase() === 'li';
+        if (isLiInList) {
+          // Switching list type (e.g. OL→UL): remove <li> from old list,
+          // insert new list at editor top-level to prevent nesting.
+          const parentList = currentBlock.closest('ol, ul');
+          if (parentList) {
+            parentList.removeChild(currentBlock);
+            if (parentList.children.length === 0) {
+              // Old list is now empty — replace it with the new list
+              parentList.parentNode?.replaceChild(list, parentList);
+            } else {
+              // Old list still has items — insert new list after it at editor level
+              let topAnchor: HTMLElement | null = parentList as HTMLElement;
+              while (topAnchor.parentElement && topAnchor.parentElement !== snapshot.editor) {
+                topAnchor = topAnchor.parentElement;
+              }
+              topAnchor.parentNode?.insertBefore(list, topAnchor.nextSibling);
+            }
+          } else {
+            snapshot.editor.appendChild(list);
+          }
+        } else {
+          // Normal case (empty <p>, <h1> etc.) — direct replacement
+          currentBlock.parentNode?.replaceChild(list, currentBlock);
+        }
+
+        snapshot.editor.focus();
+        placeCaretAtNodeStart(snapshot.selection, item);
+        window.requestAnimationFrame(() => {
+          syncNoteContentFromEditor();
+          refreshNoteToolbarState();
+        });
+        return;
+      }
     }
 
     runNoteEditorCommand(isOrdered ? 'insertOrderedList' : 'insertUnorderedList');
-  }, [syncNoteContentFromEditor, insertTypingTargetAfterCurrentBlock, isNoteBlockEffectivelyEmpty, noteToolbarState.bulletList, noteToolbarState.orderedList, refreshNoteToolbarState, resolveNoteSelectionSnapshot, runNoteEditorCommand]);
+  }, [syncNoteContentFromEditor, insertTypingTargetAfterCurrentBlock, isNoteBlockEffectivelyEmpty, noteToolbarState.bulletList, noteToolbarState.orderedList, refreshNoteToolbarState, resolveNoteSelectionSnapshot, runNoteEditorCommand, placeCaretAtNodeStart]);
 
   const handleNoteStyleButtonPointerDown = useCallback((key: NoteStylePresetKey, event: React.PointerEvent<HTMLButtonElement>) => {
     event.preventDefault();
@@ -901,6 +1103,7 @@ const StudyHub: React.FC<StudyHubProps> = ({
       personaId: createPersonaId,
       boundBookIds: createSelectedBookIds,
       coverUrl: createCoverUrl || undefined,
+      paperCssPresets: DEFAULT_PAPER_CSS_PRESETS.map((p) => ({ ...p })),
       notes: [],
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -1016,6 +1219,72 @@ const StudyHub: React.FC<StudyHubProps> = ({
     closePaperModal();
   };
 
+  // ─── Paper CSS editor handlers ───
+
+  const updateNotebook = async (patch: Partial<Notebook>) => {
+    if (!activeNotebook) return;
+    const updated = { ...activeNotebook, ...patch, updatedAt: Date.now() };
+    setActiveNotebook(updated);
+    setNotebooks((prev) => prev.map((n) => n.id === updated.id ? updated : n));
+    await saveNotebook(updated);
+  };
+
+  const handleApplyPaperCss = async () => {
+    await updateNotebook({ paperCssDraft, paperCssApplied: paperCssDraft });
+  };
+
+  const handleClearPaperCss = async () => {
+    setPaperCssDraft('');
+    await updateNotebook({
+      paperCssDraft: '',
+      paperCssApplied: '',
+      selectedPaperCssPresetId: null,
+    });
+  };
+
+  const handleSavePaperCssPreset = (name: string) => {
+    const safeName = name.trim();
+    if (!safeName || !activeNotebook) {
+      showNotification('请输入预设名称', 'error');
+      return;
+    }
+    const nextId = `paper-css-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const newPreset: ReaderCssPreset = { id: nextId, name: safeName, css: paperCssDraft };
+    const nextPresets = [...(activeNotebook.paperCssPresets ?? DEFAULT_PAPER_CSS_PRESETS), newPreset];
+    void updateNotebook({ paperCssPresets: nextPresets, selectedPaperCssPresetId: nextId });
+  };
+
+  const handleDeletePaperCssPreset = (presetId: string) => {
+    if (!activeNotebook) return;
+    const prev = activeNotebook.paperCssPresets ?? [...DEFAULT_PAPER_CSS_PRESETS];
+    const next = prev.filter((p) => p.id !== presetId);
+    const resetSelected = activeNotebook.selectedPaperCssPresetId === presetId;
+    void updateNotebook({
+      paperCssPresets: next,
+      ...(resetSelected ? { selectedPaperCssPresetId: null } : {}),
+    });
+  };
+
+  const handleRenamePaperCssPreset = (presetId: string, name: string) => {
+    const safeName = name.trim();
+    if (!safeName || !activeNotebook) {
+      showNotification('请输入新的预设名称', 'error');
+      return;
+    }
+    const next = (activeNotebook.paperCssPresets ?? [...DEFAULT_PAPER_CSS_PRESETS]).map((p) =>
+      p.id === presetId ? { ...p, name: safeName } : p,
+    );
+    void updateNotebook({ paperCssPresets: next });
+  };
+
+  const handleSelectPaperCssPreset = (presetId: string | null) => {
+    if (!activeNotebook || !presetId) return;
+    const preset = (activeNotebook.paperCssPresets ?? DEFAULT_PAPER_CSS_PRESETS).find((p) => p.id === presetId);
+    if (!preset) return;
+    setPaperCssDraft(preset.css);
+    void updateNotebook({ selectedPaperCssPresetId: presetId, paperCssDraft: preset.css });
+  };
+
   // ─── Note CRUD ───
   const handleAddNote = () => {
     if (!activeNotebook) return;
@@ -1038,7 +1307,12 @@ const StudyHub: React.FC<StudyHubProps> = ({
 
   const handleSaveNote = useCallback(() => {
     if (!activeNotebook || !activeNote) return;
-    const updatedNote = { ...activeNote, content: noteContent, updatedAt: Date.now() };
+    // Read directly from editor DOM to guarantee latest content (avoids stale-state edge cases)
+    const editor = noteEditorRef.current;
+    const latestContent = (editor && notesView === 'editor')
+      ? extractMarkdownFromEditorHtml(editor.innerHTML)
+      : noteContent;
+    const updatedNote = { ...activeNote, content: latestContent, updatedAt: Date.now() };
     const updatedNb = {
       ...activeNotebook,
       notes: activeNotebook.notes.map((n) => n.id === updatedNote.id ? updatedNote : n),
@@ -1048,7 +1322,7 @@ const StudyHub: React.FC<StudyHubProps> = ({
     setActiveNotebook(updatedNb);
     saveNotebook(updatedNb);
     setNotebooks((prev) => prev.map((n) => n.id === updatedNb.id ? updatedNb : n));
-  }, [activeNotebook, activeNote, noteContent]);
+  }, [activeNotebook, activeNote, noteContent, notesView, extractMarkdownFromEditorHtml]);
 
   const openNoteEditor = (note: StudyNote) => {
     switchNotesView('editor', () => {
@@ -2129,6 +2403,9 @@ const StudyHub: React.FC<StudyHubProps> = ({
   const renderPaperModal = () => {
     if (!showPaperModal || !activeNotebook) return null;
     const currentPaper = activeNotebook.paperBgUrl || '';
+    const cssPresets: ReaderCssPreset[] = activeNotebook.paperCssPresets ?? DEFAULT_PAPER_CSS_PRESETS;
+    const cssSelectedId = activeNotebook.selectedPaperCssPresetId || '';
+    const cssSelectedPreset = cssPresets.find((p) => p.id === cssSelectedId) || null;
 
     return (
       <ModalPortal>
@@ -2136,7 +2413,7 @@ const StudyHub: React.FC<StudyHubProps> = ({
           onClick={closePaperModal}
         >
           <div onClick={(e) => e.stopPropagation()}
-            className={`${isDarkMode ? 'bg-[#2d3748] border-slate-600' : 'neu-bg border-white/50'} w-full max-w-sm rounded-2xl px-2 py-5 border relative flex flex-col ${closingPaperModal ? 'app-fade-exit' : 'app-fade-enter'}`}
+            className={`${isDarkMode ? 'bg-[#2d3748] border-slate-600' : 'neu-bg border-white/50'} w-full max-w-sm max-h-[85vh] rounded-2xl px-2 py-5 border relative flex flex-col overflow-y-auto no-scrollbar ${closingPaperModal ? 'app-fade-exit' : 'app-fade-enter'}`}
           >
             <button onClick={closePaperModal} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600">
               <X size={20} />
@@ -2222,6 +2499,123 @@ const StudyHub: React.FC<StudyHubProps> = ({
                   <RotateCcw size={14} /> 恢复默认纸张
                 </button>
               )}
+
+              {/* ═══ 自定义纸张 CSS ═══ */}
+              <div className={`w-full h-[1px] ${isDarkMode ? 'bg-slate-600/40' : 'bg-slate-300/40'}`} />
+
+              <div className="space-y-3">
+                <div className={`text-sm font-bold ${headingClass}`}>自定义纸张 CSS</div>
+
+                {/* CSS textarea */}
+                <textarea
+                  value={paperCssDraft}
+                  onChange={(e) => setPaperCssDraft(e.target.value)}
+                  placeholder={PAPER_CSS_PLACEHOLDER}
+                  className={`w-full min-h-[120px] rounded-xl p-3 text-xs outline-none resize-y ${inputClass}`}
+                />
+
+                {/* Preset dropdown */}
+                <PaperCssSingleSelectDropdown
+                  options={cssPresets.map((p) => ({ value: p.id, label: p.name }))}
+                  value={cssSelectedId}
+                  onChange={(val) => handleSelectPaperCssPreset(val || null)}
+                  placeholder="无"
+                  inputClass={inputClass}
+                  cardClass={cardClass}
+                  isDarkMode={isDarkMode}
+                />
+
+                {/* Apply & Clear */}
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => {
+                    if (paperCssApplyTimerRef.current) window.clearTimeout(paperCssApplyTimerRef.current);
+                    setTimeout(() => void handleApplyPaperCss(), 80);
+                    setPaperCssApplySuccess(true);
+                    paperCssApplyTimerRef.current = window.setTimeout(() => setPaperCssApplySuccess(false), 1600);
+                  }} className={`flex-1 h-10 rounded-xl text-sm ${btnClass} ${activeBtnClass} flex items-center justify-center gap-1.5`}
+                    style={{ color: paperCssApplySuccess ? 'rgb(var(--theme-500) / 1)' : undefined, transition: 'color 0.3s ease' }}
+                  >
+                    <span className={`inline-flex transition-all duration-300 ${paperCssApplySuccess ? 'w-[15px] opacity-100 scale-100' : 'w-0 opacity-0 scale-50'}`} style={{ overflow: 'hidden' }}>
+                      <Check size={15} className="shrink-0" />
+                    </span>
+                    应用
+                  </button>
+                  <button type="button" onClick={() => {
+                    if (paperCssClearTimerRef.current) window.clearTimeout(paperCssClearTimerRef.current);
+                    setTimeout(() => void handleClearPaperCss(), 80);
+                    setPaperCssClearSuccess(true);
+                    paperCssClearTimerRef.current = window.setTimeout(() => setPaperCssClearSuccess(false), 1600);
+                  }} className={`flex-1 h-10 rounded-xl text-sm ${btnClass} ${activeBtnClass} flex items-center justify-center gap-1.5`}
+                    style={{ color: paperCssClearSuccess ? 'rgb(var(--theme-500) / 1)' : undefined, transition: 'color 0.3s ease' }}
+                  >
+                    <span className={`inline-flex transition-all duration-300 ${paperCssClearSuccess ? 'w-[15px] opacity-100 scale-100' : 'w-0 opacity-0 scale-50'}`} style={{ overflow: 'hidden' }}>
+                      <Eraser size={15} className="shrink-0" />
+                    </span>
+                    清空
+                  </button>
+                </div>
+
+                {/* Preset management */}
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="text"
+                    value={paperCssPresetName}
+                    onChange={(e) => setPaperCssPresetName(e.target.value)}
+                    placeholder="预设名称"
+                    className={`w-full h-10 rounded-xl px-3 text-sm outline-none ${inputClass}`}
+                  />
+                  <div className="flex w-full items-center justify-between">
+                    {/* Save / Rename */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (paperCssPresetName.trim()) {
+                          if (paperCssEditingPresetId) {
+                            handleRenamePaperCssPreset(paperCssEditingPresetId, paperCssPresetName.trim());
+                            setPaperCssEditingPresetId(null);
+                          } else {
+                            handleSavePaperCssPreset(paperCssPresetName.trim());
+                          }
+                          setPaperCssPresetName('');
+                        }
+                      }}
+                      className={`w-10 h-10 aspect-square shrink-0 rounded-xl flex items-center justify-center text-rose-400 ${btnClass} ${activeBtnClass} transition-all`}
+                      title="保存"
+                    >
+                      <Save size={16} />
+                    </button>
+                    {/* Edit (rename) */}
+                    <button
+                      type="button"
+                      disabled={!cssSelectedPreset}
+                      onClick={() => {
+                        if (cssSelectedPreset) {
+                          setPaperCssPresetName(cssSelectedPreset.name);
+                          setPaperCssEditingPresetId(cssSelectedPreset.id);
+                        }
+                      }}
+                      className={`w-10 h-10 aspect-square shrink-0 rounded-xl flex items-center justify-center transition-all ${
+                        cssSelectedPreset ? `${btnClass} ${activeBtnClass}` : disabledIconButtonClass
+                      }`}
+                      title="重命名"
+                    >
+                      <Edit2 size={16} />
+                    </button>
+                    {/* Delete */}
+                    <button
+                      type="button"
+                      disabled={!cssSelectedPreset}
+                      onClick={() => cssSelectedPreset && handleDeletePaperCssPreset(cssSelectedPreset.id)}
+                      className={`w-10 h-10 aspect-square shrink-0 rounded-xl flex items-center justify-center transition-all ${
+                        cssSelectedPreset ? enabledDangerIconButtonClass : disabledIconButtonClass
+                      }`}
+                      title="删除"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <input type="file" ref={paperFileInputRef} className="hidden" accept="image/*" onChange={handlePaperFileSelect} />
@@ -2408,12 +2802,12 @@ const StudyHub: React.FC<StudyHubProps> = ({
               );
               return (
               <div key={note.id} onClick={() => openNoteEditor(note)}
-                className={`p-4 rounded-2xl cursor-pointer transition-all active:scale-[0.98] border ${isDarkMode ? 'border-slate-700/30' : 'border-amber-200/40'}`}
+                className={`sh-paper p-4 rounded-2xl cursor-pointer transition-all active:scale-[0.98] border ${isDarkMode ? 'border-slate-700/30' : 'border-amber-200/40'}`}
                 style={{
                   backgroundColor: paperStyle.bg,
-                  ...(paperStyle.css !== 'none' && { backgroundImage: paperStyle.css }),
-                  ...(paperStyle.size && { backgroundSize: paperStyle.size }),
-                  ...(paperStyle.position && { backgroundPosition: paperStyle.position }),
+                  ...(!activeNotebook.paperCssApplied && paperStyle.css !== 'none' && { backgroundImage: paperStyle.css }),
+                  ...(!activeNotebook.paperCssApplied && paperStyle.size && { backgroundSize: paperStyle.size }),
+                  ...(!activeNotebook.paperCssApplied && paperStyle.position && { backgroundPosition: paperStyle.position }),
                   ...(paperStyle.border && { border: paperStyle.border }),
                   ...(paperStyle.shadow && { boxShadow: paperStyle.shadow }),
                 }}
@@ -2505,18 +2899,18 @@ const StudyHub: React.FC<StudyHubProps> = ({
         </div>
 
         {/* Lined paper */}
-        <div className={`rounded-2xl overflow-hidden ${cardClass}`}
+        <div className={`sh-paper rounded-2xl overflow-hidden ${cardClass}`}
           style={{
             backgroundColor: paperStyle.bg,
-            ...(paperStyle.isCustomImage && paperStyle.css !== 'none' && { backgroundImage: paperStyle.css, backgroundSize: 'cover', backgroundPosition: 'center' }),
-            ...(!paperStyle.isCustomImage && paperStyle.css !== 'none' && { backgroundImage: paperStyle.css }),
+            ...(!activeNotebook.paperCssApplied && paperStyle.isCustomImage && paperStyle.css !== 'none' && { backgroundImage: paperStyle.css, backgroundSize: 'cover', backgroundPosition: 'center' }),
+            ...(!activeNotebook.paperCssApplied && !paperStyle.isCustomImage && paperStyle.css !== 'none' && { backgroundImage: paperStyle.css }),
             ...(paperStyle.border && { border: paperStyle.border }),
             ...(paperStyle.shadow && { boxShadow: paperStyle.shadow }),
           }}
         >
-          <div className="relative">
-            {/* Margin line (hidden when non-default paper) */}
-            {!paperStyle.hideMarginLine && (
+          <div className="sh-paper-inner relative">
+            {/* Margin line (hidden when non-default paper or custom CSS applied) */}
+            {!paperStyle.hideMarginLine && !activeNotebook.paperCssApplied && (
               <div className="absolute top-0 bottom-0 left-10" style={{ width: '2px', background: marginLineColor }} />
             )}
 
@@ -2536,10 +2930,10 @@ const StudyHub: React.FC<StudyHubProps> = ({
               onKeyUp={refreshNoteToolbarState}
               onMouseUp={refreshNoteToolbarState}
               onPaste={handleNoteEditorPaste}
-              className={`studyhub-note-editor w-full min-h-[300px] bg-transparent outline-none ${paperStyle.hideMarginLine ? 'pl-4' : 'pl-14'} pr-4 pt-4 pb-4 text-sm no-scrollbar overflow-x-hidden break-words`}
+              className={`studyhub-note-editor w-full min-h-[300px] bg-transparent outline-none ${paperStyle.hideMarginLine || activeNotebook.paperCssApplied ? 'pl-4' : 'pl-14'} pr-4 pt-4 pb-4 text-sm no-scrollbar overflow-x-hidden break-words`}
               style={{
                 lineHeight: `${lineHeight}px`,
-                ...(!paperStyle.isCustomImage && paperStyle.css !== 'none' && {
+                ...(!activeNotebook.paperCssApplied && !paperStyle.isCustomImage && paperStyle.css !== 'none' && {
                   backgroundImage: paperStyle.css,
                   backgroundPosition: '0 0',
                   ...(paperStyle.size ? { backgroundSize: paperStyle.size } : {}),
@@ -2550,7 +2944,7 @@ const StudyHub: React.FC<StudyHubProps> = ({
             ></div>
             {!noteContent.trim() && !isNoteEditorFocused && (
               <div
-                className={`absolute top-4 pointer-events-none text-sm ${paperStyle.hideMarginLine ? 'left-4' : 'left-14'} ${subTextClass}`}
+                className={`sh-note-placeholder absolute top-4 pointer-events-none text-sm ${paperStyle.hideMarginLine || activeNotebook.paperCssApplied ? 'left-4' : 'left-14'} ${subTextClass}`}
                 style={{ lineHeight: `${lineHeight}px` }}
               >
                 随便写点什么吧
@@ -3267,7 +3661,7 @@ const StudyHub: React.FC<StudyHubProps> = ({
   // ══════════════════════════════════════════════
 
   return (
-    <div className={`flex-1 flex flex-col overflow-hidden ${containerClass}`}>
+    <div className={`flex-1 flex flex-col overflow-hidden ${containerClass} ${isDarkMode ? 'dark-mode' : ''}`}>
       {/* Header - matching Settings page: p-6 container + pt-2 header = pt-8 total */}
       <header className="px-6 mb-4 pt-8">
         <h1 className={`text-2xl font-bold ${headingClass}`}>共读集</h1>
@@ -3279,6 +3673,7 @@ const StudyHub: React.FC<StudyHubProps> = ({
       {/* Notes views — each view manages its own fixed header + scroll area */}
       {activeTab === 'notes' && (
         <div key={notesView} className={`flex-1 flex flex-col overflow-hidden ${notesViewAnimClass}`}>
+          {activeNotebook?.paperCssApplied && <style>{activeNotebook.paperCssApplied}</style>}
           {notesView === 'list' && renderNotebookList()}
           {notesView === 'detail' && renderNotebookDetail()}
           {notesView === 'editor' && renderNoteEditor()}

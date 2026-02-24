@@ -594,10 +594,9 @@ const ReaderMoreSettingsPanel: React.FC<Props> = (props) => {
     return explicit || defaultBubblePreset;
   }, [appearanceSettings.bubbleCssPresets, appearanceSettings.selectedBubbleCssPresetId, defaultBubblePreset]);
   const selectedBubblePresetId = selectedPreset?.id || defaultBubblePreset?.id || '';
-  const isDefaultBubblePresetSelected = selectedPreset?.id === DEFAULT_NEUMORPHISM_BUBBLE_CSS_PRESET_ID;
   const previewBubbleCss = useMemo(
-    () => mapDraftCssToPreview(appearanceSettings.bubbleCssDraft || ''),
-    [appearanceSettings.bubbleCssDraft]
+    () => mapDraftCssToPreview(appearanceSettings.bubbleCssDraft || defaultBubblePreset?.css || ''),
+    [appearanceSettings.bubbleCssDraft, defaultBubblePreset]
   );
   const summaryApiPresetOptions = useMemo(() => {
     return apiPresets
@@ -1105,15 +1104,7 @@ const ReaderMoreSettingsPanel: React.FC<Props> = (props) => {
                       <textarea
                         value={appearanceSettings.bubbleCssDraft}
                         onChange={(e) => {
-                          const nextDraft = e.target.value;
-                          if (nextDraft.length === 0 && defaultBubblePreset) {
-                            onUpdateAppearanceSettings({
-                              bubbleCssDraft: defaultBubblePreset.css,
-                              selectedBubbleCssPresetId: defaultBubblePreset.id,
-                            });
-                            return;
-                          }
-                          onUpdateAppearanceSettings({ bubbleCssDraft: nextDraft });
+                          onUpdateAppearanceSettings({ bubbleCssDraft: e.target.value });
                         }}
                         placeholder={BUBBLE_CSS_PLACEHOLDER}
                         className={`w-full min-h-[120px] rounded-xl p-3 text-xs outline-none resize-y ${inputClass} mb-3`}
@@ -1213,15 +1204,15 @@ const ReaderMoreSettingsPanel: React.FC<Props> = (props) => {
                           </button>
                           <button
                             type="button"
-                            disabled={!selectedPreset || isDefaultBubblePresetSelected}
+                            disabled={!selectedPreset}
                             onClick={() => {
-                              if (selectedPreset && !isDefaultBubblePresetSelected) {
+                              if (selectedPreset) {
                                 setPresetName(selectedPreset.name);
                                 setEditingPresetId(selectedPreset.id);
                               }
                             }}
                             className={`w-10 h-10 aspect-square shrink-0 rounded-xl flex items-center justify-center transition-all ${
-                              selectedPreset && !isDefaultBubblePresetSelected
+                              selectedPreset
                                 ? `${btnClass} ${activeBtnClass}`
                                 : disabledIconButtonClass
                             }`}
@@ -1231,10 +1222,10 @@ const ReaderMoreSettingsPanel: React.FC<Props> = (props) => {
                           </button>
                           <button
                             type="button"
-                            disabled={!selectedPreset || isDefaultBubblePresetSelected}
-                            onClick={() => selectedPreset && !isDefaultBubblePresetSelected && onDeleteBubbleCssPreset(selectedPreset.id)}
+                            disabled={!selectedPreset}
+                            onClick={() => selectedPreset && onDeleteBubbleCssPreset(selectedPreset.id)}
                             className={`w-10 h-10 aspect-square shrink-0 rounded-xl flex items-center justify-center transition-all ${
-                              selectedPreset && !isDefaultBubblePresetSelected
+                              selectedPreset
                                 ? enabledDangerIconButtonClass
                                 : disabledIconButtonClass
                             }`}

@@ -164,6 +164,10 @@ export interface Notebook {
   boundBookIds: string[];
   coverUrl?: string;
   paperBgUrl?: string;
+  paperCssDraft?: string;
+  paperCssApplied?: string;
+  paperCssPresets?: ReaderCssPreset[];
+  selectedPaperCssPresetId?: string | null;
   notes: StudyNote[];
   createdAt: number;
   updatedAt: number;

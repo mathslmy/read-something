@@ -974,7 +974,7 @@ const ReaderMessagePanel: React.FC<ReaderMessagePanelProps> = ({
     const nextSelectedPresetId =
       currentSelectedPresetId && normalizedPresets.some((item) => item.id === currentSelectedPresetId)
         ? currentSelectedPresetId
-        : DEFAULT_NEUMORPHISM_BUBBLE_CSS_PRESET_ID;
+        : normalizedPresets[0]?.id ?? null;
     updateReaderMoreAppearanceSettings({
       bubbleCssPresets: normalizedPresets,
       selectedBubbleCssPresetId: nextSelectedPresetId,
@@ -1167,33 +1167,22 @@ const ReaderMessagePanel: React.FC<ReaderMessagePanelProps> = ({
 
   const handleDeleteBubbleCssPreset = useCallback(
     (presetId: string) => {
-      if (presetId === DEFAULT_NEUMORPHISM_BUBBLE_CSS_PRESET_ID) {
-        showToast('默认预设不可删除', 'info');
-        return;
-      }
       const next = appSettings.readerMore.appearance.bubbleCssPresets.filter((item) => item.id !== presetId);
+      const wasSelected = appSettings.readerMore.appearance.selectedBubbleCssPresetId === presetId;
       updateReaderMoreAppearanceSettings({
         bubbleCssPresets: next,
-        selectedBubbleCssPresetId:
-          appSettings.readerMore.appearance.selectedBubbleCssPresetId === presetId
-            ? DEFAULT_NEUMORPHISM_BUBBLE_CSS_PRESET_ID
-            : appSettings.readerMore.appearance.selectedBubbleCssPresetId,
+        selectedBubbleCssPresetId: wasSelected ? (next[0]?.id ?? null) : appSettings.readerMore.appearance.selectedBubbleCssPresetId,
       });
     },
     [
       appSettings.readerMore.appearance.bubbleCssPresets,
       appSettings.readerMore.appearance.selectedBubbleCssPresetId,
       updateReaderMoreAppearanceSettings,
-      showToast,
     ]
   );
 
   const handleRenameBubbleCssPreset = useCallback(
     (presetId: string, name: string) => {
-      if (presetId === DEFAULT_NEUMORPHISM_BUBBLE_CSS_PRESET_ID) {
-        showToast('默认预设不可重命名', 'info');
-        return;
-      }
       const safeName = name.trim();
       if (!safeName) {
         showToast('请输入新的预设名称', 'info');
@@ -1215,29 +1204,12 @@ const ReaderMessagePanel: React.FC<ReaderMessagePanelProps> = ({
 
   const handleSelectBubbleCssPreset = useCallback(
     (presetId: string | null) => {
-      const targetPresetId = presetId || DEFAULT_NEUMORPHISM_BUBBLE_CSS_PRESET_ID;
-      const builtinPreset = DEFAULT_READER_BUBBLE_CSS_PRESETS.find((item) => item.id === targetPresetId) || null;
-      const preset = builtinPreset || appSettings.readerMore.appearance.bubbleCssPresets.find((item) => item.id === targetPresetId);
+      if (!presetId) return;
+      const preset = appSettings.readerMore.appearance.bubbleCssPresets.find((item) => item.id === presetId);
       if (!preset) return;
-      const nextPresetList = (() => {
-        if (!builtinPreset) return appSettings.readerMore.appearance.bubbleCssPresets;
-        const source = appSettings.readerMore.appearance.bubbleCssPresets;
-        const hasBuiltin = source.some((item) => item.id === builtinPreset.id);
-        if (!hasBuiltin) return [...source, { ...builtinPreset }];
-        return source.map((item) =>
-          item.id === builtinPreset.id
-            ? {
-                ...item,
-                name: builtinPreset.name,
-                css: builtinPreset.css,
-              }
-            : item
-        );
-      })();
       updateReaderMoreAppearanceSettings({
-        selectedBubbleCssPresetId: targetPresetId,
+        selectedBubbleCssPresetId: presetId,
         bubbleCssDraft: preset.css,
-        ...(builtinPreset ? { bubbleCssPresets: nextPresetList } : {}),
       });
     },
     [appSettings.readerMore.appearance.bubbleCssPresets, updateReaderMoreAppearanceSettings]
