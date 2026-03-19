@@ -227,6 +227,38 @@ const CharacterSettings: React.FC<CharacterSettingsProps> = ({
       )}
 
       <div className="flex flex-col gap-6">
+        {/* 新建角色按钮 + 下拉菜单 */}
+        <div className="relative" ref={dropdownRef}>
+          {/* 触发按钮 */}
+          <button
+            onClick={toggleDropdown}
+            className={`${cardClass} w-full p-4 text-slate-400 flex items-center justify-center gap-2 hover:text-rose-400 transition-colors border-2 border-dashed border-transparent hover:border-rose-200 rounded-2xl`}
+          >
+            <Plus size={20} />
+            <span className="font-medium">新建角色</span>
+          </button>
+
+          {/* 下拉菜单（展开在按钮下方） */}
+          {(dropdownOpen || dropdownClosing) && (
+            <div className={`absolute top-full mt-2 left-0 right-0 z-20 p-2 rounded-xl ${cardClass} border border-slate-400/10 shadow-2xl ${dropdownClosing ? 'reader-flyout-exit' : 'reader-flyout-enter'}`}>
+              <button
+                onClick={() => { importInputRef.current?.click(); closeDropdown(); }}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-left transition-colors ${isDarkMode ? 'hover:bg-slate-700 text-slate-200' : 'hover:bg-slate-100 text-slate-700'}`}
+              >
+                <FolderOpen size={18} className="text-rose-400 flex-shrink-0" />
+                <span>本地导入</span>
+              </button>
+              <button
+                onClick={addNewCharacter}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-left transition-colors ${isDarkMode ? 'hover:bg-slate-700 text-slate-200' : 'hover:bg-slate-100 text-slate-700'}`}
+              >
+                <PenLine size={18} className="text-rose-400 flex-shrink-0" />
+                <span>手动新建</span>
+              </button>
+            </div>
+          )}
+        </div>
+
         {characters.map(char => {
           const isEditing = editingCharacterId === char.id;
           const boundUsers = personas.filter(p => p.boundRoles.includes(char.name));
@@ -353,37 +385,6 @@ const CharacterSettings: React.FC<CharacterSettingsProps> = ({
           );
         })}
 
-        {/* 新建角色按钮 + 下拉菜单 */}
-        <div className="relative" ref={dropdownRef}>
-          {/* 下拉菜单（展开在按钮上方） */}
-          {(dropdownOpen || dropdownClosing) && (
-            <div className={`absolute bottom-full mb-2 left-0 right-0 z-20 p-2 rounded-xl ${cardClass} border border-slate-400/10 shadow-2xl ${dropdownClosing ? 'reader-flyout-exit-up' : 'reader-flyout-enter-up'}`}>
-              <button
-                onClick={() => { importInputRef.current?.click(); closeDropdown(); }}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-left transition-colors ${isDarkMode ? 'hover:bg-slate-700 text-slate-200' : 'hover:bg-slate-100 text-slate-700'}`}
-              >
-                <FolderOpen size={18} className="text-rose-400 flex-shrink-0" />
-                <span>本地导入</span>
-              </button>
-              <button
-                onClick={addNewCharacter}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-left transition-colors ${isDarkMode ? 'hover:bg-slate-700 text-slate-200' : 'hover:bg-slate-100 text-slate-700'}`}
-              >
-                <PenLine size={18} className="text-rose-400 flex-shrink-0" />
-                <span>手动新建</span>
-              </button>
-            </div>
-          )}
-
-          {/* 触发按钮 */}
-          <button
-            onClick={toggleDropdown}
-            className={`${cardClass} w-full p-4 text-slate-400 flex items-center justify-center gap-2 hover:text-rose-400 transition-colors border-2 border-dashed border-transparent hover:border-rose-200 rounded-2xl`}
-          >
-            <Plus size={20} />
-            <span className="font-medium">新建角色</span>
-          </button>
-        </div>
       </div>
 
       {/* 补全信息弹窗 */}
