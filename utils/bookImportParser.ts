@@ -3,6 +3,7 @@ import * as mammoth from 'mammoth';
 import * as pdfjsLib from 'pdfjs-dist';
 import { Chapter, ReaderContentBlock } from '../types';
 import { deleteImageByRef, saveImageBlob } from './imageStorage';
+import { reconstructPdfPageWithMath, type PdfTextItem } from './pdfMathReconstruction';
 
 type SupportedImportFormat = 'txt' | 'word' | 'epub' | 'pdf' | 'mobi';
 
@@ -1585,9 +1586,7 @@ const parsePdfFile = async (file: File, context: ImportParseContext) => {
     const textContent = await page.getTextContent().catch(() => null);
     const pageText = normalizeTextBlock(
       textContent && Array.isArray(textContent.items)
-        ? textContent.items
-            .map((item: any) => (typeof item?.str === 'string' ? item.str : ''))
-            .join(' ')
+        ? reconstructPdfPageWithMath(textContent.items as PdfTextItem[])
         : ''
     );
     if (pageText) {
