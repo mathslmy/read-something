@@ -31,7 +31,7 @@ export interface PdfTextItem {
 // identical to a Latin letter (A, B, E, Z, H, I, K, M, N, O, P, T, X)
 // because they are routinely used as plain letters and the mapping
 // would produce more false positives than useful rewrites.
-const UNICODE_TO_LATEX: Record<string, string> = {
+export const UNICODE_TO_LATEX: Record<string, string> = {
   // Greek lowercase
   'α': '\\alpha', 'β': '\\beta', 'γ': '\\gamma', 'δ': '\\delta',
   'ε': '\\varepsilon', 'ζ': '\\zeta', 'η': '\\eta', 'θ': '\\theta',
@@ -92,7 +92,7 @@ const UNICODE_TO_LATEX: Record<string, string> = {
 // Every Unicode char that hints at math content. We exclude `…`
 // which commonly appears in prose as a plain ellipsis — its presence
 // alone is not enough to flip a sentence into a math run.
-const MATH_HINT_CHARS = new Set(
+export const MATH_HINT_CHARS = new Set(
   Object.keys(UNICODE_TO_LATEX).filter((ch) => ch !== '…')
 );
 

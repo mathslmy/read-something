@@ -56,7 +56,7 @@ import {
 } from '../utils/readerTextNormalize';
 import { PRESET_HIGHLIGHT_COLORS, resolveHighlightItems, buildPositionFromHighlight } from '../utils/highlightUtils';
 import type { ResolvedHighlightItem } from '../utils/highlightUtils';
-import { parseLatexRegions, renderLatexToHtml } from '../utils/readerLatex';
+import { findAllLatexRegions, renderLatexToHtml } from '../utils/readerLatex';
 import type { LatexRegion } from '../utils/readerLatex';
 
 interface ReaderProps {
@@ -2539,7 +2539,7 @@ const Reader: React.FC<ReaderProps> = ({
   }, [currentHighlightRanges, pendingHighlightRange]);
 
   const paragraphMathRegions = useMemo(() => {
-    return paragraphMeta.map((item) => parseLatexRegions(item.text));
+    return paragraphMeta.map((item) => findAllLatexRegions(item.text));
   }, [paragraphMeta]);
 
   const paragraphRenderData = useMemo(() => {
