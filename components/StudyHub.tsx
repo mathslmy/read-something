@@ -30,6 +30,7 @@ import { PRESET_HIGHLIGHT_COLORS, resolveHighlightItems } from '../utils/highlig
 import type { ResolvedHighlightItem } from '../utils/highlightUtils';
 import { estimateRagSafeOffset, retrieveRelevantChunks, isEmbedModelLoaded } from '../utils/ragEngine';
 import { DEFAULT_PAPER_CSS_PRESETS, DEFAULT_PAPER_CSS_PRESET_ID, normalizeLegacyPaperCss } from '../utils/paperCssPresets';
+import { renderLatexToReact } from '../utils/latexRender';
 
 interface StudyHubProps {
   isDarkMode: boolean;
@@ -3568,7 +3569,7 @@ const StudyHub: React.FC<StudyHubProps> = ({
                                 </span>
                               </div>
                               <p className={`text-xs leading-relaxed mt-0.5 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-                                {msg.content}
+                                {renderLatexToReact(msg.content, { preserveNewlines: true })}
                               </p>
                               {isAi && (
                                 <div className="flex justify-end gap-3 mt-0.5">

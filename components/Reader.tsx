@@ -44,6 +44,7 @@ import { exportCachedTtsAudiobookZip } from '../utils/ttsAudiobookExport';
 import type { TtsPreset, TtsChunk } from '../types';
 import { getBookContent, saveBookReaderState } from '../utils/bookContentStorage';
 import { buildConversationKey, persistConversationBucket, readConversationBucket } from '../utils/readerChatRuntime';
+import { hasLatexMath, renderLatexToReact } from '../utils/latexRender';
 import { getImageBlobByRef, isImageRef } from '../utils/imageStorage';
 import { resolveVisibleReaderTextRange, resolveFullViewportTextRange } from '../utils/readerVisibleRange';
 import ReaderMessagePanel from './ReaderMessagePanel';
@@ -5193,32 +5194,38 @@ const Reader: React.FC<ReaderProps> = ({
                     }`}
                     data-tts-paragraph-index={item.paragraphIndex}
                   >
-                    {paragraph.segments.map(segment => (
-                      <span
-                        key={`${segment.start}-${segment.end}-${segment.color || 'plain'}`}
-                        data-reader-segment="1"
-                        data-start={segment.start}
-                        className={segment.color ? 'rounded-[0.14em]' : undefined}
-                        style={{
-                          ...(segment.color ? { backgroundColor: resolveHighlightBackgroundColor(segment.color, isDarkMode) } : {}),
-                          ...(segment.hasAiUnderline
-                            ? {
-                                textDecorationLine: 'underline',
-                                textDecorationStyle: 'dashed',
-                                textDecorationColor: isDarkMode
-                                  ? 'rgb(var(--theme-300) / 0.95)'
-                                  : 'rgb(var(--theme-500) / 0.92)',
-                                textDecorationThickness: '1.5px',
-                                textUnderlineOffset: '0.16em',
-                                textDecorationSkipInk: 'none',
-                                WebkitTextDecorationSkip: 'none',
-                              }
-                            : {}),
-                        }}
-                      >
-                        {segment.text}
+                    {hasLatexMath(paragraph.paragraph.text) ? (
+                      <span data-reader-latex="1">
+                        {renderLatexToReact(paragraph.paragraph.text)}
                       </span>
-                    ))}
+                    ) : (
+                      paragraph.segments.map(segment => (
+                        <span
+                          key={`${segment.start}-${segment.end}-${segment.color || 'plain'}`}
+                          data-reader-segment="1"
+                          data-start={segment.start}
+                          className={segment.color ? 'rounded-[0.14em]' : undefined}
+                          style={{
+                            ...(segment.color ? { backgroundColor: resolveHighlightBackgroundColor(segment.color, isDarkMode) } : {}),
+                            ...(segment.hasAiUnderline
+                              ? {
+                                  textDecorationLine: 'underline',
+                                  textDecorationStyle: 'dashed',
+                                  textDecorationColor: isDarkMode
+                                    ? 'rgb(var(--theme-300) / 0.95)'
+                                    : 'rgb(var(--theme-500) / 0.92)',
+                                  textDecorationThickness: '1.5px',
+                                  textUnderlineOffset: '0.16em',
+                                  textDecorationSkipInk: 'none',
+                                  WebkitTextDecorationSkip: 'none',
+                                }
+                              : {}),
+                          }}
+                        >
+                          {segment.text}
+                        </span>
+                      ))
+                    )}
                   </p>
                 </React.Fragment>
               );

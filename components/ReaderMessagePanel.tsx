@@ -210,6 +210,7 @@ const getViewportHeight = () => {
 };
 
 import { resolveVisibleReaderTextRange, resolveFullViewportTextRange } from '../utils/readerVisibleRange';
+import { renderLatexToReact } from '../utils/latexRender';
 
 const FeatherIcon = ({ size = 16, className = '' }: { size?: number; className?: string }) => (
   <svg
@@ -3328,10 +3329,10 @@ const ReaderMessagePanel: React.FC<ReaderMessagePanelProps> = ({
                             <div className="font-semibold opacity-90">
                               {message.quote.senderName} · {formatTimestampMinute(message.quote.timestamp).slice(11)}
                             </div>
-                            <div className="opacity-80 break-all">{message.quote.content}</div>
+                            <div className="opacity-80 break-all">{renderLatexToReact(message.quote.content)}</div>
                           </div>
                         )}
-                        <div className="break-words">{message.content}</div>
+                        <div className="break-words">{renderLatexToReact(message.content, { preserveNewlines: true })}</div>
                       </div>
                     </div>
                   </div>
