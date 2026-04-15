@@ -113,6 +113,47 @@
         scrollbar-width: none;
       }
 
+      /* ── LaTeX / KaTeX reader integration ── */
+      .reader-latex {
+        color: inherit;
+        line-height: 1.2;
+      }
+      .reader-latex .katex {
+        font-size: 1em;
+        color: inherit;
+        white-space: normal;
+      }
+      .reader-latex--block {
+        display: block;
+        text-align: center;
+        text-indent: 0;
+        margin: 0.75em 0;
+        overflow-x: auto;
+        overflow-y: hidden;
+      }
+      .reader-latex--block .katex-display {
+        margin: 0;
+        text-indent: 0;
+      }
+      .reader-latex--block .katex-display > .katex {
+        text-indent: 0;
+        white-space: nowrap;
+      }
+      .reader-latex-fallback {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        background-color: rgb(148 163 184 / 0.18);
+        padding: 0 0.25em;
+        border-radius: 0.2em;
+        color: inherit;
+      }
+      .reader-latex-fallback--block {
+        display: block;
+        padding: 0.4em 0.6em;
+        margin: 0.5em 0;
+        text-align: left;
+        white-space: pre-wrap;
+      }
+
       /* Reader scroll area: keep right scrollbar visible and draggable */
       .reader-scroll-panel {
         scrollbar-gutter: stable;

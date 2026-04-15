@@ -56,6 +56,8 @@ import {
 } from '../utils/readerTextNormalize';
 import { PRESET_HIGHLIGHT_COLORS, resolveHighlightItems, buildPositionFromHighlight } from '../utils/highlightUtils';
 import type { ResolvedHighlightItem } from '../utils/highlightUtils';
+import { parseLatexRegions, renderLatexToHtml } from '../utils/readerLatex';
+import type { LatexRegion } from '../utils/readerLatex';
 
 interface ReaderProps {
   onBack: (snapshot?: ReaderSessionSnapshot) => void;
@@ -114,6 +116,9 @@ interface ParagraphSegment {
   text: string;
   color?: string;
   hasAiUnderline?: boolean;
+  isMath?: boolean;
+  mathContent?: string;
+  mathDisplayMode?: boolean;
 }
 
 interface ReaderRenderParagraphItem {
@@ -530,42 +535,76 @@ const applyHighlightStroke = (ranges: TextHighlightRange[], stroke: TextHighligh
 const buildParagraphSegments = (
   paragraph: ParagraphMeta,
   highlightRanges: TextHighlightRange[],
-  aiUnderlineRanges: TextAiUnderlineRange[]
+  aiUnderlineRanges: TextAiUnderlineRange[],
+  mathRegions: LatexRegion[] = []
 ) => {
-  const boundaries = new Set<number>([paragraph.start, paragraph.end]);
-
-  highlightRanges.forEach((range) => {
-    if (range.end <= paragraph.start || range.start >= paragraph.end) return;
-    boundaries.add(Math.max(paragraph.start, range.start));
-    boundaries.add(Math.min(paragraph.end, range.end));
-  });
-  aiUnderlineRanges.forEach((range) => {
-    if (range.end <= paragraph.start || range.start >= paragraph.end) return;
-    boundaries.add(Math.max(paragraph.start, range.start));
-    boundaries.add(Math.min(paragraph.end, range.end));
-  });
-
-  const orderedBoundaries = Array.from(boundaries).sort((a, b) => a - b);
-  const segments: ParagraphSegment[] = [];
-
-  for (let i = 0; i < orderedBoundaries.length - 1; i += 1) {
-    const start = orderedBoundaries[i];
-    const end = orderedBoundaries[i + 1];
-    if (end <= start) continue;
-
-    const text = paragraph.text.slice(start - paragraph.start, end - paragraph.start);
-    if (!text) continue;
-
-    const highlight = highlightRanges.find((range) => range.start < end && range.end > start);
-    const hasAiUnderline = aiUnderlineRanges.some((range) => range.start < end && range.end > start);
-
-    segments.push({
-      start,
-      end,
-      text,
-      color: highlight?.color,
-      hasAiUnderline,
+  const splitTextRange = (rangeStart: number, rangeEnd: number): ParagraphSegment[] => {
+    if (rangeEnd <= rangeStart) return [];
+    const boundaries = new Set<number>([rangeStart, rangeEnd]);
+    highlightRanges.forEach((range) => {
+      if (range.end <= rangeStart || range.start >= rangeEnd) return;
+      boundaries.add(Math.max(rangeStart, range.start));
+      boundaries.add(Math.min(rangeEnd, range.end));
     });
+    aiUnderlineRanges.forEach((range) => {
+      if (range.end <= rangeStart || range.start >= rangeEnd) return;
+      boundaries.add(Math.max(rangeStart, range.start));
+      boundaries.add(Math.min(rangeEnd, range.end));
+    });
+
+    const ordered = Array.from(boundaries).sort((a, b) => a - b);
+    const result: ParagraphSegment[] = [];
+    for (let i = 0; i < ordered.length - 1; i += 1) {
+      const start = ordered[i];
+      const end = ordered[i + 1];
+      if (end <= start) continue;
+      const text = paragraph.text.slice(start - paragraph.start, end - paragraph.start);
+      if (!text) continue;
+
+      const highlight = highlightRanges.find((range) => range.start < end && range.end > start);
+      const hasAiUnderline = aiUnderlineRanges.some((range) => range.start < end && range.end > start);
+
+      result.push({
+        start,
+        end,
+        text,
+        color: highlight?.color,
+        hasAiUnderline,
+      });
+    }
+    return result;
+  };
+
+  const segments: ParagraphSegment[] = [];
+  let cursor = paragraph.start;
+
+  const normalizedMathRegions = mathRegions
+    .map((region) => ({
+      region,
+      absStart: Math.max(paragraph.start, paragraph.start + region.start),
+      absEnd: Math.min(paragraph.end, paragraph.start + region.end),
+    }))
+    .filter(({ absStart, absEnd }) => absEnd > absStart)
+    .sort((a, b) => a.absStart - b.absStart);
+
+  normalizedMathRegions.forEach(({ region, absStart, absEnd }) => {
+    if (absStart > cursor) {
+      segments.push(...splitTextRange(cursor, absStart));
+    }
+    const text = paragraph.text.slice(absStart - paragraph.start, absEnd - paragraph.start);
+    segments.push({
+      start: absStart,
+      end: absEnd,
+      text,
+      isMath: true,
+      mathContent: region.content,
+      mathDisplayMode: region.displayMode,
+    });
+    cursor = Math.max(cursor, absEnd);
+  });
+
+  if (cursor < paragraph.end) {
+    segments.push(...splitTextRange(cursor, paragraph.end));
   }
 
   if (segments.length === 0) {
@@ -2499,12 +2538,21 @@ const Reader: React.FC<ReaderProps> = ({
     return applyHighlightStroke(currentHighlightRanges, pendingHighlightRange);
   }, [currentHighlightRanges, pendingHighlightRange]);
 
+  const paragraphMathRegions = useMemo(() => {
+    return paragraphMeta.map((item) => parseLatexRegions(item.text));
+  }, [paragraphMeta]);
+
   const paragraphRenderData = useMemo(() => {
-    return paragraphMeta.map(item => ({
+    return paragraphMeta.map((item, index) => ({
       paragraph: item,
-      segments: buildParagraphSegments(item, renderedHighlightRanges, currentAiUnderlineRanges),
+      segments: buildParagraphSegments(
+        item,
+        renderedHighlightRanges,
+        currentAiUnderlineRanges,
+        paragraphMathRegions[index]
+      ),
     }));
-  }, [paragraphMeta, renderedHighlightRanges, currentAiUnderlineRanges]);
+  }, [paragraphMeta, renderedHighlightRanges, currentAiUnderlineRanges, paragraphMathRegions]);
 
   useEffect(() => {
     setPendingHighlightRange(null);
@@ -5193,32 +5241,53 @@ const Reader: React.FC<ReaderProps> = ({
                     }`}
                     data-tts-paragraph-index={item.paragraphIndex}
                   >
-                    {paragraph.segments.map(segment => (
-                      <span
-                        key={`${segment.start}-${segment.end}-${segment.color || 'plain'}`}
-                        data-reader-segment="1"
-                        data-start={segment.start}
-                        className={segment.color ? 'rounded-[0.14em]' : undefined}
-                        style={{
-                          ...(segment.color ? { backgroundColor: resolveHighlightBackgroundColor(segment.color, isDarkMode) } : {}),
-                          ...(segment.hasAiUnderline
-                            ? {
-                                textDecorationLine: 'underline',
-                                textDecorationStyle: 'dashed',
-                                textDecorationColor: isDarkMode
-                                  ? 'rgb(var(--theme-300) / 0.95)'
-                                  : 'rgb(var(--theme-500) / 0.92)',
-                                textDecorationThickness: '1.5px',
-                                textUnderlineOffset: '0.16em',
-                                textDecorationSkipInk: 'none',
-                                WebkitTextDecorationSkip: 'none',
-                              }
-                            : {}),
-                        }}
-                      >
-                        {segment.text}
-                      </span>
-                    ))}
+                    {paragraph.segments.map(segment => {
+                      if (segment.isMath && segment.mathContent !== undefined) {
+                        const html = renderLatexToHtml(segment.mathContent, !!segment.mathDisplayMode);
+                        return (
+                          <span
+                            key={`${segment.start}-${segment.end}-math`}
+                            className={segment.mathDisplayMode ? 'reader-latex reader-latex--block' : 'reader-latex'}
+                            contentEditable={false}
+                            style={{
+                              userSelect: 'none',
+                              WebkitUserSelect: 'none',
+                              textIndent: 0,
+                              ...(segment.mathDisplayMode
+                                ? { display: 'block', textAlign: 'center', margin: '0.75em 0' }
+                                : {}),
+                            }}
+                            dangerouslySetInnerHTML={{ __html: html }}
+                          />
+                        );
+                      }
+                      return (
+                        <span
+                          key={`${segment.start}-${segment.end}-${segment.color || 'plain'}`}
+                          data-reader-segment="1"
+                          data-start={segment.start}
+                          className={segment.color ? 'rounded-[0.14em]' : undefined}
+                          style={{
+                            ...(segment.color ? { backgroundColor: resolveHighlightBackgroundColor(segment.color, isDarkMode) } : {}),
+                            ...(segment.hasAiUnderline
+                              ? {
+                                  textDecorationLine: 'underline',
+                                  textDecorationStyle: 'dashed',
+                                  textDecorationColor: isDarkMode
+                                    ? 'rgb(var(--theme-300) / 0.95)'
+                                    : 'rgb(var(--theme-500) / 0.92)',
+                                  textDecorationThickness: '1.5px',
+                                  textUnderlineOffset: '0.16em',
+                                  textDecorationSkipInk: 'none',
+                                  WebkitTextDecorationSkip: 'none',
+                                }
+                              : {}),
+                          }}
+                        >
+                          {segment.text}
+                        </span>
+                      );
+                    })}
                   </p>
                 </React.Fragment>
               );
